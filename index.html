@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini Meet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Custom scrollbar for chat/captions */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #1f2937; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #4b5563; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #6b7280; 
+      }
+    </style>
+    <!-- MediaPipe for Virtual Backgrounds -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-gray-900 text-white overflow-hidden">
+    <div id="root"></div>
+    <!-- Note: If using standard Vite structure, this might need to be /src/index.tsx -->
+    <script type="module" src="/src/main.tsx"></script> 
+    <script>
+      // Fallback if the user named it index.tsx or put it in root
+      // This script attempts to load the file if main.tsx fails, just a helper for different setups
+      window.onerror = function(msg, url, line) {
+        if(msg.includes("Failed to fetch dynamically imported module")) {
+           console.log("Trying fallback entry point...");
+           const script = document.createElement('script');
+           script.type = 'module';
+           script.src = '/index.tsx';
+           document.body.appendChild(script);
+        }
+      }
+    </script>
+  </body>
+</html>

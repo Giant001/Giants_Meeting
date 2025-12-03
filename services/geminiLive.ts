@@ -1,0 +1,277 @@
+import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import { createPcmBlob, decodeAudioData, base64ToUint8Array, blobToBase64 } from '../utils/audioUtils';
+import { TranscriptionItem } from '../types';
+
+export interface LiveConnectionCallbacks {
+  onOpen: () => void;
+  onClose: () => void;
+  onError: (error: Error) => void;
+  onAudioData: (buffer: AudioBuffer) => void;
+  onTranscription: (item: TranscriptionItem) => void;
+}
+
+export class GeminiLiveClient {
+  private ai: GoogleGenAI;
+  private sessionPromise: Promise<any> | null = null;
+  private inputAudioContext: AudioContext | null = null;
+  private outputAudioContext: AudioContext | null = null;
+  private inputSource: MediaStreamAudioSourceNode | null = null;
+  private processor: ScriptProcessorNode | null = null;
+  private audioStreamDestination: MediaStreamAudioDestinationNode | null = null;
+  private nextStartTime: number = 0;
+  private isActive: boolean = false;
+  private videoInterval: number | null = null;
+  private connectionTimeoutId: number | null = null;
+
+  // Transcription state
+  private currentInputTranscription = '';
+  private currentOutputTranscription = '';
+
+  constructor(apiKey: string) {
+    this.ai = new GoogleGenAI({ apiKey });
+  }
+
+  public async connect(callbacks: LiveConnectionCallbacks) {
+    if (this.isActive) return;
+
+    try {
+      this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      
+      // Critical: Resume contexts immediately as this is triggered by a user action
+      if (this.inputAudioContext.state === 'suspended') await this.inputAudioContext.resume();
+      if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
+
+      // Create a destination to capture audio output for recording
+      this.audioStreamDestination = this.outputAudioContext.createMediaStreamDestination();
+
+      // Use existing permissions or request new ones
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      this.isActive = true;
+
+      // Set a timeout to prevent hanging forever if the websocket doesn't connect
+      const timeoutPromise = new Promise((_, reject) => {
+        this.connectionTimeoutId = window.setTimeout(() => {
+          reject(new Error("Connection timed out. Check your network or API Key."));
+        }, 15000); // 15s timeout
+      });
+
+      const connectionPromise = this.ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+          },
+          systemInstruction: "You are a helpful, professional, and friendly AI participant in a video meeting. Your name is Gemini. You can see the user via their camera and hear them. Respond concisely and naturally.",
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+        },
+        callbacks: {
+          onopen: () => {
+            console.log('Gemini Live Connection Opened');
+            if (this.connectionTimeoutId) clearTimeout(this.connectionTimeoutId);
+            this.setupAudioInput(stream);
+            callbacks.onOpen();
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            this.handleMessage(message, callbacks);
+          },
+          onclose: () => {
+            console.log('Gemini Live Connection Closed');
+            this.cleanup();
+            callbacks.onClose();
+          },
+          onerror: (err) => {
+            console.error('Gemini Live Error', err);
+            this.cleanup();
+            callbacks.onError(new Error(err.message || 'Connection failed'));
+          }
+        }
+      });
+
+      this.sessionPromise = Promise.race([connectionPromise, timeoutPromise]) as Promise<any>;
+      
+      this.sessionPromise.catch((err) => {
+          console.error("Session connection failed:", err);
+          this.cleanup();
+          callbacks.onError(err);
+      });
+
+    } catch (error) {
+      console.error('Connection failed', error);
+      this.cleanup();
+      callbacks.onError(error as Error);
+    }
+  }
+
+  public getRemoteAudioStream(): MediaStream | null {
+    return this.audioStreamDestination?.stream || null;
+  }
+
+  private setupAudioInput(stream: MediaStream) {
+    if (!this.inputAudioContext) return;
+    
+    this.inputSource = this.inputAudioContext.createMediaStreamSource(stream);
+    this.processor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
+    
+    this.processor.onaudioprocess = (e) => {
+      if (!this.isActive || !this.sessionPromise) return;
+      
+      const inputData = e.inputBuffer.getChannelData(0);
+      const pcmBlob = createPcmBlob(inputData);
+      
+      this.sessionPromise.then(session => {
+        if (session && session.sendRealtimeInput) {
+             session.sendRealtimeInput({ media: pcmBlob });
+        }
+      }).catch(err => {
+          if (this.isActive) console.error("Error sending audio", err);
+      });
+    };
+
+    this.inputSource.connect(this.processor);
+    this.processor.connect(this.inputAudioContext.destination);
+  }
+
+  private async handleMessage(message: LiveServerMessage, callbacks: LiveConnectionCallbacks) {
+    // Handle Audio
+    const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+    if (base64Audio && this.outputAudioContext) {
+      try {
+        const uint8Array = base64ToUint8Array(base64Audio);
+        const audioBuffer = await decodeAudioData(uint8Array, this.outputAudioContext);
+        
+        this.nextStartTime = Math.max(this.nextStartTime, this.outputAudioContext.currentTime);
+        
+        callbacks.onAudioData(audioBuffer); 
+        
+        const source = this.outputAudioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        
+        source.connect(this.outputAudioContext.destination);
+        
+        if (this.audioStreamDestination) {
+            source.connect(this.audioStreamDestination);
+        }
+
+        source.start(this.nextStartTime);
+        this.nextStartTime += audioBuffer.duration;
+      } catch (err) {
+        console.error("Error decoding audio", err);
+      }
+    }
+
+    // Handle Transcription
+    if (message.serverContent?.outputTranscription) {
+      const text = message.serverContent.outputTranscription.text;
+      this.currentOutputTranscription += text;
+    } else if (message.serverContent?.inputTranscription) {
+      const text = message.serverContent.inputTranscription.text;
+      this.currentInputTranscription += text;
+    }
+
+    if (message.serverContent?.turnComplete) {
+      if (this.currentInputTranscription.trim()) {
+        callbacks.onTranscription({
+          id: Date.now().toString() + '-user',
+          text: this.currentInputTranscription,
+          sender: 'user',
+          isFinal: true
+        });
+        this.currentInputTranscription = '';
+      }
+      
+      if (this.currentOutputTranscription.trim()) {
+         callbacks.onTranscription({
+          id: Date.now().toString() + '-model',
+          text: this.currentOutputTranscription,
+          sender: 'model',
+          isFinal: true
+        });
+        this.currentOutputTranscription = '';
+      }
+    }
+  }
+
+  public startVideoStreaming(videoElement: HTMLVideoElement) {
+    if (this.videoInterval) clearInterval(this.videoInterval);
+    if (!videoElement) return;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const JPEG_QUALITY = 0.5;
+    const FPS = 2;
+
+    this.videoInterval = window.setInterval(async () => {
+      // Safety check: ensure element still exists and has width
+      if (!this.isActive || !this.sessionPromise || !ctx || !videoElement.videoWidth) return;
+
+      canvas.width = videoElement.videoWidth * 0.5;
+      canvas.height = videoElement.videoHeight * 0.5;
+      
+      ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+      
+      canvas.toBlob(async (blob) => {
+        if (blob) {
+          const base64Data = await blobToBase64(blob);
+          this.sessionPromise?.then(session => {
+            if (session && session.sendRealtimeInput) {
+                session.sendRealtimeInput({
+                    media: { data: base64Data, mimeType: 'image/jpeg' }
+                });
+            }
+          }).catch(e => {
+               if(this.isActive) console.error("Error sending video frame", e);
+          });
+        }
+      }, 'image/jpeg', JPEG_QUALITY);
+
+    }, 1000 / FPS);
+  }
+
+  public stopVideoStreaming() {
+    if (this.videoInterval) {
+      clearInterval(this.videoInterval);
+      this.videoInterval = null;
+    }
+  }
+
+  public disconnect() {
+    this.isActive = false;
+    this.cleanup();
+  }
+
+  private cleanup() {
+    if (this.connectionTimeoutId) {
+        clearTimeout(this.connectionTimeoutId);
+        this.connectionTimeoutId = null;
+    }
+
+    this.stopVideoStreaming();
+    if (this.inputSource) {
+        try { this.inputSource.disconnect(); } catch(e) {}
+    }
+    if (this.processor) {
+        try { this.processor.disconnect(); } catch(e) {}
+    }
+    if (this.inputAudioContext) {
+        try { this.inputAudioContext.close(); } catch(e) {}
+    }
+    if (this.outputAudioContext) {
+        try { this.outputAudioContext.close(); } catch(e) {}
+    }
+    
+    this.sessionPromise?.then(session => {
+        if(session && session.close) session.close();
+    }).catch(() => {});
+
+    this.inputSource = null;
+    this.processor = null;
+    this.inputAudioContext = null;
+    this.outputAudioContext = null;
+    this.sessionPromise = null;
+    this.audioStreamDestination = null;
+  }
+}
