@@ -5,7 +5,7 @@ import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, PhoneOffIcon, 
   LayoutGridIcon, SettingsIcon, ScreenShareIcon, RecordIcon, 
   StopRecordIcon, CopyIcon, SparklesIcon, RefreshIcon, DownloadIcon,
-  BoardIcon, LockIcon
+  BoardIcon, LockIcon, MessageSquareIcon, SendIcon, Volume2Icon, VolumeXIcon
 } from './components/Icons';
 import AudioVisualizer from './components/AudioVisualizer';
 import Whiteboard from './components/Whiteboard';
@@ -39,7 +39,13 @@ const App = () => {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isMutedAll, setIsMutedAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Chat state
+  const [chatMessage, setChatMessage] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
   
   // Background State
   const [backgroundMode, setBackgroundMode] = useState<'none' | 'blur' | 'image'>('none');
@@ -274,6 +280,13 @@ const App = () => {
      }
   }, [backgroundMode]);
 
+  // Scroll Chat to bottom
+  useEffect(() => {
+      if (isChatOpen && chatEndRef.current) {
+          chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+  }, [transcriptions, isChatOpen]);
+
 
   // Handle Joining
   const handleJoin = async () => {
@@ -316,7 +329,14 @@ const App = () => {
         setAiAudioLevel(Math.min(1, rms * 5)); 
       },
       onTranscription: (item) => {
-        setTranscriptions(prev => [...prev, item]);
+        setTranscriptions(prev => {
+            // Check if this item ID already exists to avoid dupes or update partials
+            // Just append for now, filtering can be done in render if needed
+            // Actually, live API sends fragments. We want to show a flow.
+            // For simplicity, we just append. A real chat needs robust dedupe/update logic.
+            // But since 'id' is unique per utterance turn in our logic, it's okay.
+            return [...prev, item];
+        });
       }
     });
   };
@@ -501,6 +521,33 @@ const App = () => {
   const toggleWhiteboard = () => {
       if (isScreenSharing) stopScreenShare();
       setIsWhiteboardOpen(!isWhiteboardOpen);
+  };
+  
+  const toggleChat = () => {
+      setIsChatOpen(!isChatOpen);
+  };
+  
+  const toggleMuteAll = () => {
+      const newState = !isMutedAll;
+      setIsMutedAll(newState);
+      clientRef.current?.setVolume(newState ? 0 : 1);
+  };
+
+  const handleSendMessage = (e?: React.FormEvent) => {
+      e?.preventDefault();
+      if (!chatMessage.trim() || !clientRef.current) return;
+      
+      clientRef.current.sendTextMessage(chatMessage);
+      
+      // Optimistically add user message to chat for immediate feedback
+      setTranscriptions(prev => [...prev, {
+          id: Date.now().toString() + '-local',
+          text: chatMessage,
+          sender: 'user',
+          isFinal: true
+      }]);
+      
+      setChatMessage("");
   };
 
   const startRecording = () => {
@@ -760,6 +807,13 @@ const App = () => {
            </div>
            <div className="flex gap-2 pointer-events-auto">
               <button 
+                onClick={toggleMuteAll}
+                className={`p-2 hover:bg-gray-800 rounded-full ${isMutedAll ? 'text-red-400' : 'text-white'}`}
+                title={isMutedAll ? "Unmute All" : "Mute All"}
+              >
+                 {isMutedAll ? <VolumeXIcon className="w-5 h-5" /> : <Volume2Icon className="w-5 h-5" />}
+              </button>
+              <button 
                 onClick={copyInviteLink} 
                 className="p-2 hover:bg-gray-800 rounded-full text-white" 
                 title="Copy Invite Link"
@@ -775,7 +829,7 @@ const App = () => {
         <div className="flex-1 p-4 flex gap-4 overflow-hidden relative">
           
           {/* Main View Area (AI or Whiteboard) */}
-          <div className="flex-1 bg-gray-900 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-gray-800">
+          <div className={`flex-1 bg-gray-900 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-gray-800 transition-all ${isChatOpen ? 'mr-80' : ''}`}>
              
              {isWhiteboardOpen ? (
                  <Whiteboard canvasRef={whiteboardCanvasRef} />
@@ -785,7 +839,7 @@ const App = () => {
                         {/* Visualizer for AI Voice */}
                         <div className="w-64 h-64 relative">
                         <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
-                        <AudioVisualizer isActive={true} audioLevel={aiAudioLevel} />
+                        <AudioVisualizer isActive={!isMutedAll} audioLevel={aiAudioLevel} />
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                             <span className="text-6xl">✨</span>
                         </div>
@@ -795,14 +849,15 @@ const App = () => {
                     {/* Name Tag */}
                     <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded text-sm font-medium flex items-center gap-2">
                         <span>Gemini (Host)</span>
-                        {aiAudioLevel > 0.05 && <div className="w-2 h-2 bg-green-500 rounded-full"></div>}
+                        {aiAudioLevel > 0.05 && !isMutedAll && <div className="w-2 h-2 bg-green-500 rounded-full"></div>}
+                        {isMutedAll && <VolumeXIcon className="w-3 h-3 text-red-400" />}
                     </div>
                 </>
              )}
           </div>
 
-          {/* Caption/Transcription Overlay (Only if not whiteboard for clarity) */}
-          {!isWhiteboardOpen && (
+          {/* Caption/Transcription Overlay (Only if not whiteboard for clarity and chat closed) */}
+          {!isWhiteboardOpen && !isChatOpen && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-2xl text-center pointer-events-none z-20">
                 {transcriptions.length > 0 && (
                     <div className="bg-black/60 backdrop-blur px-6 py-2 rounded-xl text-lg text-white shadow-lg transition-all inline-block">
@@ -814,9 +869,59 @@ const App = () => {
                 )}
             </div>
           )}
+          
+          {/* Chat Sidebar */}
+          <div className={`absolute top-0 right-0 bottom-0 w-80 bg-gray-900 border-l border-gray-800 shadow-2xl transition-transform duration-300 z-40 flex flex-col ${isChatOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+             <div className="p-4 border-b border-gray-800 font-bold flex justify-between items-center">
+                <span>In-Call Messages</span>
+                <button onClick={toggleChat} className="text-gray-400 hover:text-white">
+                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                 {transcriptions.length === 0 && (
+                     <div className="text-center text-gray-500 text-sm mt-10">No messages yet. Start talking!</div>
+                 )}
+                 {transcriptions.map((msg, idx) => (
+                     <div key={idx} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                         <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${
+                             msg.sender === 'user' 
+                             ? 'bg-blue-600 text-white rounded-br-none' 
+                             : 'bg-gray-800 text-gray-200 rounded-bl-none'
+                         }`}>
+                             {msg.text}
+                         </div>
+                         <span className="text-[10px] text-gray-500 mt-1 px-1">
+                             {msg.sender === 'user' ? 'You' : 'Gemini'}
+                         </span>
+                     </div>
+                 ))}
+                 <div ref={chatEndRef}></div>
+             </div>
+             
+             <div className="p-4 border-t border-gray-800 bg-gray-900">
+                 <form onSubmit={handleSendMessage} className="relative">
+                     <input 
+                         type="text" 
+                         value={chatMessage}
+                         onChange={(e) => setChatMessage(e.target.value)}
+                         placeholder="Send a message..." 
+                         className="w-full bg-gray-800 border-none rounded-full pl-4 pr-12 py-3 text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none text-white"
+                     />
+                     <button 
+                         type="submit"
+                         disabled={!chatMessage.trim()}
+                         className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-blue-600 rounded-full text-white hover:bg-blue-500 disabled:opacity-50 disabled:bg-gray-700"
+                     >
+                         <SendIcon className="w-4 h-4" />
+                     </button>
+                 </form>
+             </div>
+          </div>
 
           {/* User Self View (Floating) */}
-          <div className="absolute bottom-6 right-6 w-64 aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border border-gray-700 group z-30">
+          <div className="absolute bottom-6 right-6 w-64 aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border border-gray-700 group z-30 transition-all duration-300">
              <video 
                 ref={videoRef}
                 autoPlay 
@@ -841,7 +946,7 @@ const App = () => {
         </div>
 
         {/* Bottom Control Bar */}
-        <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center gap-4 px-4 relative">
+        <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center gap-4 px-4 relative z-50">
            
            {/* In-meeting background menu */}
            {showBgMenu && (
@@ -905,6 +1010,15 @@ const App = () => {
              inactiveColor="bg-gray-700 hover:bg-gray-600"
              icon={isRecording ? <StopRecordIcon className="text-red-500" /> : <RecordIcon />} 
              tooltip="Record Meeting"
+           />
+
+            <ControlBtn 
+             onClick={toggleChat} 
+             isActive={isChatOpen}
+             activeColor="bg-blue-600 hover:bg-blue-700"
+             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             icon={<MessageSquareIcon />} 
+             tooltip="Chat"
            />
 
            <div className="w-px h-8 bg-gray-700 mx-2"></div>

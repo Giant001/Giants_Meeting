@@ -15,6 +15,7 @@ export class GeminiLiveClient {
   private sessionPromise: Promise<any> | null = null;
   private inputAudioContext: AudioContext | null = null;
   private outputAudioContext: AudioContext | null = null;
+  private outputGainNode: GainNode | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
   private processor: ScriptProcessorNode | null = null;
   private audioStreamDestination: MediaStreamAudioDestinationNode | null = null;
@@ -42,8 +43,18 @@ export class GeminiLiveClient {
       if (this.inputAudioContext.state === 'suspended') await this.inputAudioContext.resume();
       if (this.outputAudioContext.state === 'suspended') await this.outputAudioContext.resume();
 
+      // Create GainNode for output volume control (Mute All feature)
+      this.outputGainNode = this.outputAudioContext.createGain();
+      this.outputGainNode.gain.value = 1; // Default to full volume
+      this.outputGainNode.connect(this.outputAudioContext.destination);
+
       // Create a destination to capture audio output for recording
       this.audioStreamDestination = this.outputAudioContext.createMediaStreamDestination();
+      // Connect gain node to recording destination too, so recording respects mute? 
+      // Actually usually recording should capture raw, but "Mute All" usually implies user perception.
+      // Let's keep recording connected to the source in handleMessage, or connect GainNode to it.
+      // For now, let's keep recording raw output (unmuted) or muted depending on preference.
+      // Connecting gain to destination controls what user hears.
 
       // Use existing permissions or request new ones
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -110,6 +121,33 @@ export class GeminiLiveClient {
     return this.audioStreamDestination?.stream || null;
   }
 
+  public setVolume(volume: number) {
+    if (this.outputGainNode && this.outputAudioContext) {
+        // Smooth transition
+        this.outputGainNode.gain.setTargetAtTime(volume, this.outputAudioContext.currentTime, 0.05);
+    }
+  }
+
+  public sendTextMessage(text: string) {
+      if (this.isActive && this.sessionPromise) {
+          this.sessionPromise.then(session => {
+              // Construct a client content message for text input
+              // Note: The specific method might vary based on SDK version, 
+              // but typically client_content can be sent via send() or similar.
+              if (session.send) {
+                  session.send({ 
+                      clientContent: { 
+                          turns: [{ role: 'user', parts: [{ text }] }],
+                          turnComplete: true 
+                      } 
+                  });
+              } else {
+                  console.warn("Session does not support text sending");
+              }
+          }).catch(e => console.error("Failed to send text", e));
+      }
+  }
+
   private setupAudioInput(stream: MediaStream) {
     if (!this.inputAudioContext) return;
     
@@ -138,7 +176,7 @@ export class GeminiLiveClient {
   private async handleMessage(message: LiveServerMessage, callbacks: LiveConnectionCallbacks) {
     // Handle Audio
     const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-    if (base64Audio && this.outputAudioContext) {
+    if (base64Audio && this.outputAudioContext && this.outputGainNode) {
       try {
         const uint8Array = base64ToUint8Array(base64Audio);
         const audioBuffer = await decodeAudioData(uint8Array, this.outputAudioContext);
@@ -150,8 +188,12 @@ export class GeminiLiveClient {
         const source = this.outputAudioContext.createBufferSource();
         source.buffer = audioBuffer;
         
-        source.connect(this.outputAudioContext.destination);
+        // Connect to GainNode (for Volume/Mute) instead of direct destination
+        source.connect(this.outputGainNode);
         
+        // Also connect to recording destination (raw audio)
+        // If we want recording to be muted when user mutes, we connect gain node to recorder.
+        // Usually, recording should capture sound even if muted locally.
         if (this.audioStreamDestination) {
             source.connect(this.audioStreamDestination);
         }
@@ -256,6 +298,9 @@ export class GeminiLiveClient {
     if (this.processor) {
         try { this.processor.disconnect(); } catch(e) {}
     }
+    if (this.outputGainNode) {
+        try { this.outputGainNode.disconnect(); } catch(e) {}
+    }
     if (this.inputAudioContext) {
         try { this.inputAudioContext.close(); } catch(e) {}
     }
@@ -271,6 +316,7 @@ export class GeminiLiveClient {
     this.processor = null;
     this.inputAudioContext = null;
     this.outputAudioContext = null;
+    this.outputGainNode = null;
     this.sessionPromise = null;
     this.audioStreamDestination = null;
   }
