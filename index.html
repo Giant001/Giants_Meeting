@@ -4,54 +4,51 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gemini Meet</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+
     <style>
-      /* Custom scrollbar for chat/captions */
-      ::-webkit-scrollbar {
-        width: 8px;
+      body { margin: 0; background-color: #111827; color: white; font-family: sans-serif; }
+      .loader {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px auto;
       }
-      ::-webkit-scrollbar-track {
-        background: #1f2937; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #4b5563; 
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #6b7280; 
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
       }
     </style>
-    <!-- MediaPipe for Virtual Backgrounds -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
   <script type="importmap">
 {
   "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "vite": "https://aistudiocdn.com/vite@^7.2.6",
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.7",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1"
   }
 }
 </script>
 </head>
-  <body class="bg-gray-900 text-white overflow-hidden">
-    <div id="root"></div>
-    <!-- Note: If using standard Vite structure, this might need to be /src/index.tsx -->
-    <script type="module" src="/src/main.tsx"></script> 
-    <script>
-      // Fallback if the user named it index.tsx or put it in root
-      // This script attempts to load the file if main.tsx fails, just a helper for different setups
-      window.onerror = function(msg, url, line) {
-        if(msg.includes("Failed to fetch dynamically imported module")) {
-           console.log("Trying fallback entry point...");
-           const script = document.createElement('script');
-           script.type = 'module';
-           script.src = '/index.tsx';
-           document.body.appendChild(script);
-        }
-      }
-    </script>
+  <body>
+    <div id="root">
+      <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+         <div class="loader"></div>
+         <h1 class="text-xl">Loading Gemini Meet...</h1>
+      </div>
+    </div>
+    
+    <!-- Standard Entry Point -->
+    <script type="module" src="/index.tsx"></script> 
   </body>
 </html>

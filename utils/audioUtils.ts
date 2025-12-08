@@ -1,4 +1,8 @@
-import { Blob } from '@google/genai';
+// Define a local interface that matches the expected structure for the Gemini API
+export interface GeminiAudioData {
+  data: string;
+  mimeType: string;
+}
 
 export function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);
@@ -39,7 +43,8 @@ export async function decodeAudioData(
   return buffer;
 }
 
-export function createPcmBlob(data: Float32Array): Blob {
+// Return the local interface GeminiAudioData instead of SDK Blob
+export function createPcmBlob(data: Float32Array): GeminiAudioData {
   const l = data.length;
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {

@@ -3,14 +3,20 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load env file based on `mode` in the current working directory.
-  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
-  const env = loadEnv(mode, (process as any).cwd(), '');
+  const cwd = process.cwd();
+  const env = loadEnv(mode, cwd, '');
+  
   return {
     plugins: [react()],
     define: {
-      // This ensures process.env.API_KEY is replaced with the actual key value during build
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || '')
+    },
+    resolve: {
+      extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
+    },
+    server: {
+      port: 5173,
+      host: true
     }
   }
 })

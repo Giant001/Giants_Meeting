@@ -36,8 +36,13 @@ export class GeminiLiveClient {
     if (this.isActive) return;
 
     try {
-      this.inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      this.outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+          throw new Error("Web Audio API not supported in this browser");
+      }
+
+      this.inputAudioContext = new AudioContextClass({ sampleRate: 16000 });
+      this.outputAudioContext = new AudioContextClass({ sampleRate: 24000 });
       
       // Critical: Resume contexts immediately as this is triggered by a user action
       if (this.inputAudioContext.state === 'suspended') await this.inputAudioContext.resume();
@@ -50,11 +55,6 @@ export class GeminiLiveClient {
 
       // Create a destination to capture audio output for recording
       this.audioStreamDestination = this.outputAudioContext.createMediaStreamDestination();
-      // Connect gain node to recording destination too, so recording respects mute? 
-      // Actually usually recording should capture raw, but "Mute All" usually implies user perception.
-      // Let's keep recording connected to the source in handleMessage, or connect GainNode to it.
-      // For now, let's keep recording raw output (unmuted) or muted depending on preference.
-      // Connecting gain to destination controls what user hears.
 
       // Use existing permissions or request new ones
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -132,8 +132,6 @@ export class GeminiLiveClient {
       if (this.isActive && this.sessionPromise) {
           this.sessionPromise.then(session => {
               // Construct a client content message for text input
-              // Note: The specific method might vary based on SDK version, 
-              // but typically client_content can be sent via send() or similar.
               if (session.send) {
                   session.send({ 
                       clientContent: { 
@@ -192,8 +190,6 @@ export class GeminiLiveClient {
         source.connect(this.outputGainNode);
         
         // Also connect to recording destination (raw audio)
-        // If we want recording to be muted when user mutes, we connect gain node to recorder.
-        // Usually, recording should capture sound even if muted locally.
         if (this.audioStreamDestination) {
             source.connect(this.audioStreamDestination);
         }

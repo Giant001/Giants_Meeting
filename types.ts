@@ -16,3 +16,10 @@ export interface TranscriptionItem {
   sender: 'user' | 'model';
   isFinal: boolean;
 }
+
+// Add trace to global window object
+declare global {
+  interface Window {
+    trace: (msg: string) => void;
+  }
+}

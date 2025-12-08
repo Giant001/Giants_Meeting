@@ -10,9 +10,7 @@ import {
 import AudioVisualizer from './components/AudioVisualizer';
 import Whiteboard from './components/Whiteboard';
 
-const API_KEY = process.env.API_KEY || '';
-
-// Type for global MediaPipe variable
+// Type for global variables
 declare global {
   interface Window {
     SelfieSegmentation: any;
@@ -230,6 +228,9 @@ const App = () => {
 
   // Start Camera Helper
   const startCamera = async () => {
+      // Ensure we don't start multiple streams
+      if (originalCameraStreamRef.current) return;
+
       try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { width: 1280, height: 720 }, 
@@ -244,7 +245,7 @@ const App = () => {
           setIsVideoOn(true);
           updateStreamSource(backgroundMode, stream);
           setError(null);
-      } catch (err) {
+      } catch (err: any) {
           console.error("Error accessing media devices", err);
           setError("Camera or Microphone access denied. Please allow permissions.");
       }
@@ -260,6 +261,7 @@ const App = () => {
       if (mediaStreamRef.current && mediaStreamRef.current.id !== originalCameraStreamRef.current?.id) {
           mediaStreamRef.current.getTracks().forEach(t => t.stop());
       }
+      mediaStreamRef.current = null;
       setIsVideoOn(false);
   };
 
@@ -269,9 +271,11 @@ const App = () => {
       startCamera();
     }
     return () => {
-      stopCamera();
+      if (meetingState === MeetingState.LOBBY) {
+          stopCamera();
+      }
     };
-  }, [meetingState]); // Re-run when returning to lobby
+  }, [meetingState]); 
 
   // Handle Background Mode Changes
   useEffect(() => {
@@ -290,8 +294,11 @@ const App = () => {
 
   // Handle Joining
   const handleJoin = async () => {
-    if (!API_KEY) {
-      alert("API Key is missing. Please check your .env file.");
+    // Safely access API KEY
+    const apiKey = process.env.API_KEY || "";
+    
+    if (!apiKey) {
+      setError("API Key not found. Please ensure the API key is configured in your environment.");
       return;
     }
 
@@ -305,40 +312,42 @@ const App = () => {
     setMeetingState(MeetingState.CONNECTING);
     setError(null);
     
-    const client = new GeminiLiveClient(API_KEY);
-    clientRef.current = client;
+    try {
+        // Create new client with the latest API key
+        const client = new GeminiLiveClient(apiKey);
+        clientRef.current = client;
 
-    // We don't start video here anymore. We wait for CONNECTED state and videoRef.
-    await client.connect({
-      onOpen: () => {
-        setMeetingState(MeetingState.CONNECTED);
-      },
-      onClose: () => {
-        setMeetingState(MeetingState.ENDED);
-      },
-      onError: (err) => {
-        setError(err.message);
-        setMeetingState(MeetingState.ERROR);
-      },
-      onAudioData: (buffer) => {
-        const data = buffer.getChannelData(0);
-        let sum = 0;
-        // Simple RMS calc
-        for(let i=0; i<data.length; i+=10) sum += data[i] * data[i];
-        const rms = Math.sqrt(sum / (data.length / 10));
-        setAiAudioLevel(Math.min(1, rms * 5)); 
-      },
-      onTranscription: (item) => {
-        setTranscriptions(prev => {
-            // Check if this item ID already exists to avoid dupes or update partials
-            // Just append for now, filtering can be done in render if needed
-            // Actually, live API sends fragments. We want to show a flow.
-            // For simplicity, we just append. A real chat needs robust dedupe/update logic.
-            // But since 'id' is unique per utterance turn in our logic, it's okay.
-            return [...prev, item];
+        // We don't start video here anymore. We wait for CONNECTED state and videoRef.
+        await client.connect({
+        onOpen: () => {
+            setMeetingState(MeetingState.CONNECTED);
+        },
+        onClose: () => {
+            setMeetingState(MeetingState.ENDED);
+        },
+        onError: (err) => {
+            setError(err.message || "Connection failed");
+            setMeetingState(MeetingState.ERROR);
+        },
+        onAudioData: (buffer) => {
+            const data = buffer.getChannelData(0);
+            let sum = 0;
+            // Simple RMS calc
+            for(let i=0; i<data.length; i+=10) sum += data[i] * data[i];
+            const rms = Math.sqrt(sum / (data.length / 10));
+            setAiAudioLevel(Math.min(1, rms * 5)); 
+        },
+        onTranscription: (item) => {
+            setTranscriptions(prev => {
+                return [...prev, item];
+            });
+        }
         });
-      }
-    });
+    } catch (e) {
+        setMeetingState(MeetingState.LOBBY);
+        setError("Failed to initialize client.");
+        console.error(e);
+    }
   };
 
   // Effect to start sending video to Gemini once connected and view is ready
@@ -351,12 +360,9 @@ const App = () => {
         
         // Determine what to stream
         if (isWhiteboardOpen && whiteboardCanvasRef.current) {
-             // To stream the whiteboard, we need to feed it into a hidden video element
-             // because the Client expects a video element.
              const wbStream = whiteboardCanvasRef.current.captureStream(10);
              whiteboardStreamRef.current = wbStream;
              
-             // Reuse rawVideoRef or a new temporary video element to feed the stream
              if (rawVideoRef.current) {
                  rawVideoRef.current.srcObject = wbStream;
                  rawVideoRef.current.play();
@@ -376,6 +382,13 @@ const App = () => {
     stopCamera();
     setMeetingState(MeetingState.ENDED);
   };
+  
+  const handleRejoin = () => {
+      // Reset state to LOBBY
+      setMeetingState(MeetingState.LOBBY);
+      setError(null);
+      setTranscriptions([]);
+  };
 
   const handleNewMeeting = () => {
     const info = generateMeetingInfo();
@@ -385,7 +398,12 @@ const App = () => {
     const url = new URL(window.location.href);
     url.searchParams.set('code', info.code);
     url.searchParams.set('pwd', info.passcode);
-    window.history.pushState({}, '', url);
+    
+    try {
+        window.history.pushState({}, '', url);
+    } catch (e) {
+        console.warn("Unable to update URL history:", e);
+    }
   };
 
   const copyInviteLink = () => {
@@ -409,15 +427,6 @@ const App = () => {
     }
   };
 
-  const toggleVideo = async () => {
-    if (isScreenSharing) {
-        stopScreenShare();
-        await startCamera(); 
-        return;
-    }
-    // ... rest of toggle logic
-  };
-  
   // Revised Toggle Video to handle "Hardware Off" correctly while keeping Audio
   const toggleVideoHardware = async () => {
       if (isScreenSharing) {
@@ -427,15 +436,12 @@ const App = () => {
       }
       
       if (isWhiteboardOpen) {
-          // If in whiteboard, close it first
           setIsWhiteboardOpen(false);
-          // Wait a tick then toggle
           setTimeout(() => toggleVideoHardware(), 100);
           return;
       }
 
       if (isVideoOn) {
-          // 1. Stop Video Tracks Only
           if (originalCameraStreamRef.current) {
               originalCameraStreamRef.current.getVideoTracks().forEach(t => t.stop());
           }
@@ -446,18 +452,16 @@ const App = () => {
           setIsVideoOn(false);
           clientRef.current?.stopVideoStreaming();
       } else {
-          // 1. Re-request AV (easiest way to get video back)
           try {
               const videoStream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
               const newVideoTrack = videoStream.getVideoTracks()[0];
               
               if (originalCameraStreamRef.current) {
-                  // Remove dead tracks
                   const oldTracks = originalCameraStreamRef.current.getVideoTracks();
                   oldTracks.forEach(t => { originalCameraStreamRef.current?.removeTrack(t); });
                   originalCameraStreamRef.current.addTrack(newVideoTrack);
               } else {
-                  originalCameraStreamRef.current = videoStream; // Temporarily just video
+                  originalCameraStreamRef.current = videoStream; 
               }
 
               setIsVideoOn(true);
@@ -483,13 +487,13 @@ const App = () => {
              const oldTracks = mediaStreamRef.current.getVideoTracks();
              oldTracks.forEach(t => {
                  t.enabled = false; 
-                 t.stop(); // Stop camera to save resources/light
+                 t.stop(); 
                  mediaStreamRef.current?.removeTrack(t);
              });
              mediaStreamRef.current.addTrack(videoTrack);
              
              setIsScreenSharing(true);
-             setIsVideoOn(true); // Technically video is sending
+             setIsVideoOn(true); 
 
              if (videoRef.current) {
                  videoRef.current.srcObject = mediaStreamRef.current;
@@ -509,7 +513,6 @@ const App = () => {
       mediaStreamRef.current?.removeTrack(screenTrack!);
 
       setIsScreenSharing(false);
-      // Revert to camera
       await startCamera();
   };
 
@@ -539,7 +542,6 @@ const App = () => {
       
       clientRef.current.sendTextMessage(chatMessage);
       
-      // Optimistically add user message to chat for immediate feedback
       setTranscriptions(prev => [...prev, {
           id: Date.now().toString() + '-local',
           text: chatMessage,
@@ -558,14 +560,12 @@ const App = () => {
         recordingMixerContextRef.current = mixerCtx;
         const dest = mixerCtx.createMediaStreamDestination();
         
-        // Add User Mic
         const userMicTrack = mediaStreamRef.current.getAudioTracks()[0];
         if (userMicTrack) {
             const micSource = mixerCtx.createMediaStreamSource(new MediaStream([userMicTrack]));
             micSource.connect(dest);
         }
 
-        // Add Gemini Audio
         const remoteStream = clientRef.current.getRemoteAudioStream();
         if (remoteStream && remoteStream.getAudioTracks().length > 0) {
             const remoteSource = mixerCtx.createMediaStreamSource(remoteStream);
@@ -574,7 +574,6 @@ const App = () => {
 
         const mixedAudioTrack = dest.stream.getAudioTracks()[0];
         
-        // Determine video track to record (Camera, Screen, or Whiteboard)
         let videoTrack;
         if (isWhiteboardOpen && whiteboardStreamRef.current) {
             videoTrack = whiteboardStreamRef.current.getVideoTracks()[0];
@@ -627,7 +626,6 @@ const App = () => {
     if (transcriptions.length === 0) return;
 
     const textContent = transcriptions.map(t => {
-      // Try to parse timestamp from ID or just use text
       let timeStr = "";
       try {
           const timestamp = parseInt(t.id.split('-')[0]);
@@ -1052,7 +1050,7 @@ const App = () => {
         )}
         
         <button 
-          onClick={() => window.location.reload()}
+          onClick={handleRejoin}
           className="px-6 py-2 bg-blue-600 rounded hover:bg-blue-700 transition"
         >
           Rejoin
