@@ -355,73 +355,86 @@ const App = () => {
         return;
     }
   };
-const peerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
   // --- 2. PeerJS Connection Logic ---
-  const initPeerConnection = () => {
-    if (!mediaStreamRef.current || !window.Peer) return;
+  // --- 2. PeerJS Connection Logic ---
+  const initPeerConnection = () => {
+    if (!mediaStreamRef.current || !window.Peer) {
+        console.warn("PeerJS or MediaStream not ready.");
+        return;
+    }
 
-    // 1. Define the Shared Room ID (This is the ID the Host uses)
-    const hostPeerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
+    // 1. Define the Shared Room ID (This is the ID the Host uses)
+    const hostPeerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
 
-    // 2. Create a Peer instance with a temporary Random ID (for all users)
-    //    This is safer and prevents the "unavailable-id" race condition/error on connection.
-    const peer = new window.Peer(); 
+    // 2. Create a Peer instance with a temporary Random ID (for all users)
+    // This simplifies the logic by having everyone try to CALL the Host.
+    const peer = new window.Peer(); 
 
-    peer.on('open', (myRandomId: string) => {
-        console.log("My unique Peer ID is:", myRandomId);
-        peerRef.current = peer;
+    peer.on('open', (myRandomId: string) => {
+        console.log("My unique Peer ID is:", myRandomId);
+        peerRef.current = peer;
 
-        // 3. Connect to the Shared Room ID (HostPeerId)
-        if (myRandomId !== hostPeerId) {
-            console.log("Attempting to connect to Host ID:", hostPeerId);
-            
-            // This is the call operation needed for GUESTS and the HOST's second attempt
-            const call = peer.call(hostPeerId, mediaStreamRef.current, {
-                metadata: { senderId: myRandomId }
-            });
-            
-            // Set up stream listeners for the incoming Host stream
-            call.on('stream', (remoteStream: MediaStream) => {
-                setRemoteStreams(prev => {
-                    if (prev.find(s => s.id === remoteStream.id)) return prev;
-                    return [...prev, remoteStream];
-                });
-            });
-            
-            call.on('error', (err: any) => {
-                // If call fails, it means the HOST hasn't created the peer yet
-                // or the host peer is offline.
-                console.error("Call to Host failed:", err); 
-                // We'll let the user wait or retry, assuming the Host will join soon.
-            });
-
-        } else {
-            console.log("I am the Host or claimed the ID:", hostPeerId);
-        }
-    });
-
-    // 4. Set up Answer Logic (Applicable to both Host and Guests)
-    peer.on('call', (call: any) => {
-        console.log("Received call from peer:", call.peer);
-        call.answer(mediaStreamRef.current); // Answer with my stream
+        // 3. Connect to the Shared Room ID (HostPeerId)
+        // EVERYONE (Host and Guest) attempts to call the shared ID.
+        // The first person to join won't have the Host Peer active yet, so the call fails.
+        // The second person's call should succeed if the first person is still active.
         
-        call.on('stream', (remoteStream: MediaStream) => {
-            setRemoteStreams(prev => {
-                if (prev.find(s => s.id === remoteStream.id)) return prev;
-                return [...prev, remoteStream];
+        console.log("Attempting to connect to Host ID:", hostPeerId);
+            
+        const call = peer.call(hostPeerId, mediaStreamRef.current, {
+            metadata: { senderId: myRandomId }
+        });
+            
+        // Set up stream listeners for the incoming Host stream
+        call.on('stream', (remoteStream: MediaStream) => {
+            setRemoteStreams(prev => {
+                if (prev.find(s => s.id === remoteStream.id)) return prev;
+                return [...prev, remoteStream];
+            });
+        });
+        
+        call.on('error', (err: any) => {
+            // This will often fire for the first user (Host) because the Host Peer ID hasn't been claimed yet.
+            // Or if the host is offline.
+            console.error("Call to Host failed:", err); 
+        });
+
+        // Since the Host needs to claim the shared ID, we use a DataConnection 
+        // to signal the Host to create a Peer with the shared ID. This requires more logic.
+        
+        // For now, let's keep it simple: if we are the 'host', we create the shared ID.
+        // A simple way to identify the 'host' is if the meetingCode was NOT in the URL.
+        const isHost = !new URLSearchParams(window.location.search).get('code');
+        
+        if (isHost) {
+            // Host should attempt to claim the shared ID
+            const hostPeer = new window.Peer(hostPeerId);
+            hostPeer.on('open', (id) => {
+                console.log("Host successfully claimed shared ID:", id);
             });
-        });
-    });
+            hostPeer.on('error', (err) => {
+                console.error("Host Peer ID failed to be claimed:", err);
+            });
+        }
+    });
 
-    peer.on('error', (err: any) => {
-        console.error("Peer Error:", err);
-    });
+    // 4. Set up Answer Logic (Applicable to both Host and Guests)
+    peer.on('call', (call: any) => {
+        console.log("Received call from peer:", call.peer);
+        call.answer(mediaStreamRef.current); // Answer with my stream
+        
+        call.on('stream', (remoteStream: MediaStream) => {
+            setRemoteStreams(prev => {
+                if (prev.find(s => s.id === remoteStream.id)) return prev;
+                return [...prev, remoteStream];
+            });
+        });
+    });
 
-    } catch (e) {
-        console.error("PeerJS initialization failed", e);
-    }
-  });
-
+    peer.on('error', (err: any) => {
+        console.error("Peer Error:", err);
+    });
+  };
   // Effect to start sending video to Gemini once connected and view is ready
   useEffect(() => {
     if (meetingState === MeetingState.CONNECTED && clientRef.current && videoRef.current) {
