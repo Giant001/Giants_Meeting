@@ -78,6 +78,10 @@ const App = () => {
   const [transcriptions, setTranscriptions] = useState<TranscriptionItem[]>([]);
   const [aiAudioLevel, setAiAudioLevel] = useState(0); 
 
+  // PeerJS State
+  const [remoteStreams, setRemoteStreams] = useState<MediaStream[]>([]);
+  const peerRef = useRef<any>(null);
+
   // Initialize MediaPipe and Raw Video Element
   useEffect(() => {
     // Check URL for code and passcode
@@ -312,15 +316,16 @@ const App = () => {
     setMeetingState(MeetingState.CONNECTING);
     setError(null);
     
+    // --- 1. Connect to Gemini AI ---
     try {
-        // Create new client with the latest API key
         const client = new GeminiLiveClient(apiKey);
         clientRef.current = client;
 
-        // We don't start video here anymore. We wait for CONNECTED state and videoRef.
         await client.connect({
         onOpen: () => {
             setMeetingState(MeetingState.CONNECTED);
+            // After connected, we can init PeerJS
+            initPeerConnection();
         },
         onClose: () => {
             setMeetingState(MeetingState.ENDED);
@@ -347,6 +352,63 @@ const App = () => {
         setMeetingState(MeetingState.LOBBY);
         setError("Failed to initialize client.");
         console.error(e);
+        return;
+    }
+  };
+
+  // --- 2. PeerJS Connection Logic ---
+  const initPeerConnection = () => {
+    if (!mediaStreamRef.current || !window.Peer) return;
+
+    // Sanitize meeting code for Peer ID (PeerJS IDs must be alphanumeric strings)
+    const peerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+    try {
+        // Attempt to create peer as the Host (using the meeting code as ID)
+        const peer = new window.Peer(peerId);
+        
+        peer.on('open', (id: string) => {
+            console.log("Joined as Host with ID:", id);
+            peerRef.current = peer;
+        });
+
+        // If I am Host, answer calls
+        peer.on('call', (call: any) => {
+            console.log("Received call from guest");
+            call.answer(mediaStreamRef.current); // Answer with my stream
+            call.on('stream', (remoteStream: MediaStream) => {
+                setRemoteStreams(prev => {
+                    if (prev.find(s => s.id === remoteStream.id)) return prev;
+                    return [...prev, remoteStream];
+                });
+            });
+        });
+
+        peer.on('error', (err: any) => {
+            if (err.type === 'unavailable-id') {
+                console.log("Host ID taken, joining as Guest...");
+                // ID is taken, so someone else is Host. I am a Guest.
+                const guestPeer = new window.Peer(); // Random ID
+                
+                guestPeer.on('open', () => {
+                    peerRef.current = guestPeer;
+                    // Call the Host
+                    const call = guestPeer.call(peerId, mediaStreamRef.current);
+                    
+                    call.on('stream', (remoteStream: MediaStream) => {
+                         setRemoteStreams(prev => {
+                            if (prev.find(s => s.id === remoteStream.id)) return prev;
+                            return [...prev, remoteStream];
+                         });
+                    });
+                });
+            } else {
+                console.error("Peer Error:", err);
+            }
+        });
+
+    } catch (e) {
+        console.error("PeerJS initialization failed", e);
     }
   };
 
@@ -379,6 +441,13 @@ const App = () => {
     stopRecording();
     stopScreenShare();
     clientRef.current?.disconnect();
+    // Destroy Peer
+    if (peerRef.current) {
+        peerRef.current.destroy();
+        peerRef.current = null;
+    }
+    setRemoteStreams([]);
+    
     stopCamera();
     setMeetingState(MeetingState.ENDED);
   };
@@ -388,6 +457,7 @@ const App = () => {
       setMeetingState(MeetingState.LOBBY);
       setError(null);
       setTranscriptions([]);
+      setRemoteStreams([]);
   };
 
   const handleNewMeeting = () => {
@@ -649,6 +719,19 @@ const App = () => {
     URL.revokeObjectURL(url);
   };
 
+  const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
+      const vidRef = useRef<HTMLVideoElement>(null);
+      useEffect(() => {
+          if (vidRef.current) vidRef.current.srcObject = stream;
+      }, [stream]);
+      return (
+          <div className="w-full h-full relative group">
+              <video ref={vidRef} autoPlay playsInline className="w-full h-full object-cover rounded-xl" />
+              <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-xs text-white">Participant</div>
+          </div>
+      );
+  };
+
   // ---- RENDER: LOBBY ----
   if (meetingState === MeetingState.LOBBY || meetingState === MeetingState.CONNECTING) {
     return (
@@ -826,32 +909,46 @@ const App = () => {
         {/* Main Stage (Grid) */}
         <div className="flex-1 p-4 flex gap-4 overflow-hidden relative">
           
-          {/* Main View Area (AI or Whiteboard) */}
-          <div className={`flex-1 bg-gray-900 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-gray-800 transition-all ${isChatOpen ? 'mr-80' : ''}`}>
-             
-             {isWhiteboardOpen ? (
-                 <Whiteboard canvasRef={whiteboardCanvasRef} />
-             ) : (
-                <>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        {/* Visualizer for AI Voice */}
-                        <div className="w-64 h-64 relative">
-                        <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
-                        <AudioVisualizer isActive={!isMutedAll} audioLevel={aiAudioLevel} />
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <span className="text-6xl">✨</span>
+          {/* Main Content (AI/Whiteboard) */}
+          <div className={`flex-1 flex flex-col gap-4 ${isChatOpen ? 'mr-80' : ''} transition-all`}>
+              
+              {/* Remote Participants Grid (if any) */}
+              {remoteStreams.length > 0 && (
+                  <div className="h-40 flex gap-4 overflow-x-auto pb-2 flex-shrink-0">
+                      {remoteStreams.map((stream) => (
+                          <div key={stream.id} className="w-64 h-full bg-gray-800 rounded-xl overflow-hidden flex-shrink-0 border border-gray-700 shadow-lg">
+                              <RemoteVideo stream={stream} />
+                          </div>
+                      ))}
+                  </div>
+              )}
+
+              {/* Central Stage */}
+              <div className="flex-1 bg-gray-900 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-gray-800 shadow-2xl">
+                {isWhiteboardOpen ? (
+                    <Whiteboard canvasRef={whiteboardCanvasRef} />
+                ) : (
+                    <>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            {/* Visualizer for AI Voice */}
+                            <div className="w-64 h-64 relative">
+                            <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
+                            <AudioVisualizer isActive={!isMutedAll} audioLevel={aiAudioLevel} />
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                <span className="text-6xl">✨</span>
+                            </div>
+                            </div>
                         </div>
+                        
+                        {/* Name Tag */}
+                        <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded text-sm font-medium flex items-center gap-2">
+                            <span>Gemini (Host)</span>
+                            {aiAudioLevel > 0.05 && !isMutedAll && <div className="w-2 h-2 bg-green-500 rounded-full"></div>}
+                            {isMutedAll && <VolumeXIcon className="w-3 h-3 text-red-400" />}
                         </div>
-                    </div>
-                    
-                    {/* Name Tag */}
-                    <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded text-sm font-medium flex items-center gap-2">
-                        <span>Gemini (Host)</span>
-                        {aiAudioLevel > 0.05 && !isMutedAll && <div className="w-2 h-2 bg-green-500 rounded-full"></div>}
-                        {isMutedAll && <VolumeXIcon className="w-3 h-3 text-red-400" />}
-                    </div>
-                </>
-             )}
+                    </>
+                )}
+             </div>
           </div>
 
           {/* Caption/Transcription Overlay (Only if not whiteboard for clarity and chat closed) */}

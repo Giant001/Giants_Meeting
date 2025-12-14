@@ -21,5 +21,6 @@ export interface TranscriptionItem {
 declare global {
   interface Window {
     trace: (msg: string) => void;
+    Peer: any;
   }
 }
