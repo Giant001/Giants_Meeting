@@ -360,52 +360,62 @@ const App = () => {
   const initPeerConnection = () => {
     if (!mediaStreamRef.current || !window.Peer) return;
 
-    // Sanitize meeting code for Peer ID (PeerJS IDs must be alphanumeric strings)
-    const peerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
+    // 1. Define the Shared Room ID (This is the ID the Host uses)
+    const hostPeerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
 
-    try {
-        // Attempt to create peer as the Host (using the meeting code as ID)
-        const peer = new window.Peer(peerId);
-        
-        peer.on('open', (id: string) => {
-            console.log("Joined as Host with ID:", id);
-            peerRef.current = peer;
-        });
+    // 2. Create a Peer instance with a temporary Random ID (for all users)
+    //    This is safer and prevents the "unavailable-id" race condition/error on connection.
+    const peer = new window.Peer(); 
 
-        // If I am Host, answer calls
-        peer.on('call', (call: any) => {
-            console.log("Received call from guest");
-            call.answer(mediaStreamRef.current); // Answer with my stream
+    peer.on('open', (myRandomId: string) => {
+        console.log("My unique Peer ID is:", myRandomId);
+        peerRef.current = peer;
+
+        // 3. Connect to the Shared Room ID (HostPeerId)
+        if (myRandomId !== hostPeerId) {
+            console.log("Attempting to connect to Host ID:", hostPeerId);
+            
+            // This is the call operation needed for GUESTS and the HOST's second attempt
+            const call = peer.call(hostPeerId, mediaStreamRef.current, {
+                metadata: { senderId: myRandomId }
+            });
+            
+            // Set up stream listeners for the incoming Host stream
             call.on('stream', (remoteStream: MediaStream) => {
                 setRemoteStreams(prev => {
                     if (prev.find(s => s.id === remoteStream.id)) return prev;
                     return [...prev, remoteStream];
                 });
             });
-        });
+            
+            call.on('error', (err: any) => {
+                // If call fails, it means the HOST hasn't created the peer yet
+                // or the host peer is offline.
+                console.error("Call to Host failed:", err); 
+                // We'll let the user wait or retry, assuming the Host will join soon.
+            });
 
-        peer.on('error', (err: any) => {
-            if (err.type === 'unavailable-id') {
-                console.log("Host ID taken, joining as Guest...");
-                // ID is taken, so someone else is Host. I am a Guest.
-                const guestPeer = new window.Peer(); // Random ID
-                
-                guestPeer.on('open', () => {
-                    peerRef.current = guestPeer;
-                    // Call the Host
-                    const call = guestPeer.call(peerId, mediaStreamRef.current);
-                    
-                    call.on('stream', (remoteStream: MediaStream) => {
-                         setRemoteStreams(prev => {
-                            if (prev.find(s => s.id === remoteStream.id)) return prev;
-                            return [...prev, remoteStream];
-                         });
-                    });
-                });
-            } else {
-                console.error("Peer Error:", err);
-            }
+        } else {
+            console.log("I am the Host or claimed the ID:", hostPeerId);
+        }
+    });
+
+    // 4. Set up Answer Logic (Applicable to both Host and Guests)
+    peer.on('call', (call: any) => {
+        console.log("Received call from peer:", call.peer);
+        call.answer(mediaStreamRef.current); // Answer with my stream
+        
+        call.on('stream', (remoteStream: MediaStream) => {
+            setRemoteStreams(prev => {
+                if (prev.find(s => s.id === remoteStream.id)) return prev;
+                return [...prev, remoteStream];
+            });
         });
+    });
+
+    peer.on('error', (err: any) => {
+        console.error("Peer Error:", err);
+    });
 
     } catch (e) {
         console.error("PeerJS initialization failed", e);
