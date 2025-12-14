@@ -355,7 +355,7 @@ const App = () => {
         return;
     }
   };
-
+const peerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
   // --- 2. PeerJS Connection Logic ---
   const initPeerConnection = () => {
     if (!mediaStreamRef.current || !window.Peer) return;
@@ -420,7 +420,7 @@ const App = () => {
     } catch (e) {
         console.error("PeerJS initialization failed", e);
     }
-  };
+  });
 
   // Effect to start sending video to Gemini once connected and view is ready
   useEffect(() => {
