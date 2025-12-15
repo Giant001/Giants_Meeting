@@ -33,6 +33,44 @@ const generateMeetingInfo = () => {
 type AppView = 'home' | 'setup' | 'meeting' | 'ended';
 type SetupMode = 'host' | 'guest';
 
+// Custom Logo Component for Giant Mitra
+const GiantMitraLogo = () => (
+    <div className="flex flex-col items-center select-none">
+        <svg width="50" height="35" viewBox="0 0 100 70" fill="none" stroke="#0ea5e9" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+            {/* J */}
+            <path d="M10 5 H 35" />
+            <path d="M22.5 5 V 50 C 22.5 65 5 60 5 50" />
+            {/* M */}
+            <path d="M45 60 V 10 L 65 60 L 85 10 V 60" />
+        </svg>
+        <span className="text-[#0ea5e9] text-[8px] font-bold -mt-1 tracking-wider font-sans">giantmitra.com</span>
+    </div>
+);
+
+// Helper Components moved to top-level to fix hoisting and reconciliation issues
+const ControlBtn = ({ onClick, isActive, icon, activeColor, inactiveColor, tooltip }: any) => (
+  <button 
+    onClick={onClick}
+    title={tooltip}
+    className={`p-3.5 rounded-full text-white transition-all duration-200 ${isActive ? activeColor : inactiveColor}`}
+  >
+    {icon}
+  </button>
+);
+
+const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
+  const vidRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+      if (vidRef.current) vidRef.current.srcObject = stream;
+  }, [stream]);
+  return (
+      <div className="w-full h-full relative group">
+          <video ref={vidRef} autoPlay playsInline className="w-full h-full object-cover rounded-xl" />
+          <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-xs text-white">Participant</div>
+      </div>
+  );
+};
+
 const App = () => {
   // Navigation State
   const [view, setView] = useState<AppView>('home');
@@ -725,28 +763,15 @@ const App = () => {
     URL.revokeObjectURL(url);
   };
 
-  const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
-      const vidRef = useRef<HTMLVideoElement>(null);
-      useEffect(() => {
-          if (vidRef.current) vidRef.current.srcObject = stream;
-      }, [stream]);
-      return (
-          <div className="w-full h-full relative group">
-              <video ref={vidRef} autoPlay playsInline className="w-full h-full object-cover rounded-xl" />
-              <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-xs text-white">Participant</div>
-          </div>
-      );
-  };
-
   // ---------------- VIEW: HOME (Landing) ----------------
   if (view === 'home') {
       const now = new Date();
       return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col">
             <div className="p-6 flex justify-between items-center">
-                 <div className="flex items-center gap-2">
-                     <div className="bg-blue-600 p-2 rounded-lg"><VideoIcon className="w-6 h-6" /></div>
-                     <span className="text-xl font-bold tracking-tight">Gemini Meet</span>
+                 <div className="flex items-center gap-3">
+                     <GiantMitraLogo />
+                     <span className="text-xl font-bold tracking-tight text-white hidden md:block">Giants Meeting Room</span>
                  </div>
                  <button className="p-2 hover:bg-gray-800 rounded-full"><SettingsIcon /></button>
             </div>
@@ -929,9 +954,9 @@ const App = () => {
         {/* Header */}
         <div className="absolute top-0 left-0 right-0 z-10 p-4 flex justify-between items-center bg-gradient-to-b from-black/70 to-transparent pointer-events-none">
            <div className="flex items-center gap-3 pointer-events-auto">
-             <div className="bg-blue-600 p-2 rounded-lg"><VideoIcon className="w-4 h-4" /></div>
+             <div className="bg-white/10 p-1 rounded-lg backdrop-blur-sm"><GiantMitraLogo /></div>
              <div className="flex flex-col">
-               <span className="font-bold text-sm">{setupMode === 'host' ? 'Your Meeting' : 'Meeting Room'}</span>
+               <span className="font-bold text-sm text-white">Giants Meeting Room</span>
                <div className="flex gap-2 text-xs text-gray-400 font-mono items-center">
                   <span>{meetingCode}</span>
                   <div className="w-1 h-1 bg-gray-500 rounded-full"></div>
@@ -1174,45 +1199,6 @@ const App = () => {
         </div>
       </div>
     );
-  }
-
-  // ---------------- VIEW: ENDED ----------------
-  return (
-    <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-white">
-      <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl border border-gray-700 text-center max-w-md w-full">
-          <h1 className="text-3xl font-bold mb-4">Meeting Ended</h1>
-          <p className="text-gray-400 mb-8">{error ? `Error: ${error}` : "You have left the meeting."}</p>
-          
-          <div className="flex flex-col gap-4">
-            {transcriptions.length > 0 && (
-              <button
-                onClick={downloadTranscript}
-                className="w-full py-3 bg-gray-700 rounded-xl hover:bg-gray-600 transition flex items-center justify-center gap-2"
-              >
-                <DownloadIcon className="w-5 h-5" /> Download Transcript
-              </button>
-            )}
-            
-            <button 
-              onClick={handleRejoin}
-              className="w-full py-3 bg-blue-600 rounded-xl hover:bg-blue-700 transition font-bold"
-            >
-              Return to Home
-            </button>
-          </div>
-      </div>
-    </div>
-  );
-};
-
-const ControlBtn = ({ onClick, isActive, icon, activeColor, inactiveColor, tooltip }: any) => (
-  <button 
-    onClick={onClick}
-    title={tooltip}
-    className={`p-3.5 rounded-full text-white transition-all duration-200 ${isActive ? activeColor : inactiveColor}`}
-  >
-    {icon}
-  </button>
-);
+  };
 
 export default App;

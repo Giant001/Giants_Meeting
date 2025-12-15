@@ -1,5 +1,5 @@
 {
-  "name": "Gemini Meet",
+  "name": "Giants Meeting Room",
   "description": "A high-fidelity video conferencing experience powered by Gemini Live API. Engage in real-time, multimodal meetings with an AI agent.",
   "requestFramePermissions": [
     "camera",
