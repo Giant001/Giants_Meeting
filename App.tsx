@@ -34,8 +34,8 @@ type AppView = 'home' | 'setup' | 'meeting' | 'ended';
 type SetupMode = 'host' | 'guest';
 
 // --- IMAGE CONFIGURATION ---
-// If you have uploaded an image, replace this URL with your local path (e.g., "/my-image.jpg")
-const HERO_IMAGE_URL = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80";
+// Office meeting background
+const HERO_IMAGE_URL = "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1920&q=80";
 // ---------------------------
 
 // Custom Logo Component for Giant Mitra
