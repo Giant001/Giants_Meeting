@@ -7,7 +7,11 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
+      // Prevents "process is not defined" error in browser
+      'process.env': {}, 
+      // Specific replacements
+      'process.env.API_KEY': JSON.stringify(env.API_KEY),
+      'process.env.NODE_ENV': JSON.stringify(mode)
     },
     server: {
       port: 5173,

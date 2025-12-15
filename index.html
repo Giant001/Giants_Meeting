@@ -29,17 +29,47 @@
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
       }
+      #error-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.9);
+        color: #ff5555;
+        z-index: 9999;
+        padding: 20px;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
     </style>
 </head>
   <body>
+    <div id="error-overlay"></div>
     <div id="root">
       <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
          <div class="loader"></div>
          <h1 class="text-xl">Loading Giants Meeting Room...</h1>
+         <p style="margin-top: 10px; opacity: 0.6; font-size: 0.9rem;">Initializing Secure Environment</p>
       </div>
     </div>
     
+    <script>
+      window.addEventListener('error', function(event) {
+        var overlay = document.getElementById('error-overlay');
+        if (overlay) {
+          overlay.style.display = 'block';
+          overlay.textContent += 'Error: ' + event.message + '\nat ' + event.filename + ':' + event.lineno + '\n\n';
+        }
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        var overlay = document.getElementById('error-overlay');
+        if (overlay) {
+          overlay.style.display = 'block';
+          overlay.textContent += 'Unhandled Promise Rejection: ' + event.reason + '\n\n';
+        }
+      });
+    </script>
+
     <!-- Standard Entry Point -->
-    <script type="module" src="/src/main.tsx"></script> 
+    <script type="module" src="./index.tsx"></script> 
   </body>
 </html>

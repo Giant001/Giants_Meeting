@@ -1207,6 +1207,10 @@ export const App = () => {
         </div>
       </div>
     );
-  };
+  }
+
+  // Fallback if no view matches
+  return null;
+};
 
 export default App;
