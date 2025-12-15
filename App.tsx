@@ -34,8 +34,8 @@ type AppView = 'home' | 'setup' | 'meeting' | 'ended';
 type SetupMode = 'host' | 'guest';
 
 // Custom Logo Component for Giant Mitra
-const GiantMitraLogo = ({ className }: { className?: string }) => (
-    <div className={`flex flex-col items-center select-none ${className}`}>
+const GiantMitraLogo = ({ className, scale = 1 }: { className?: string; scale?: number }) => (
+    <div className={`flex flex-col items-center select-none ${className}`} style={{ transform: `scale(${scale})` }}>
         <svg width="60" height="45" viewBox="0 0 120 80" fill="none" stroke="#0ea5e9" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round">
             {/* J */}
             <path d="M20 10 H 45" />
@@ -771,16 +771,19 @@ export const App = () => {
 
             <div className="flex-1 flex flex-col md:flex-row items-center justify-center gap-8 p-6 max-w-6xl mx-auto w-full">
                 
-                {/* Left: Hero/Time */}
-                <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group">
-                    <img 
-                        src="https://images.unsplash.com/photo-1627637454030-5ddd536e06e5?auto=format&fit=crop&w=1000&q=80" 
-                        alt="Nature" 
-                        className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
-                         <h1 className="text-6xl font-bold mb-2">{now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</h1>
-                         <p className="text-xl font-medium text-gray-300">
+                {/* Left: Hero/Time - UPDATED to show Giant Mitra Branding */}
+                <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group border border-gray-700 bg-gray-800 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900/40"></div>
+                    
+                    {/* Centered Large Branding */}
+                    <div className="relative z-10 p-10 bg-white/5 rounded-3xl backdrop-blur-sm border border-white/10 flex flex-col items-center gap-4 transform transition-transform hover:scale-105 duration-500">
+                        <GiantMitraLogo scale={2.5} />
+                        <h1 className="text-3xl font-bold mt-8 text-blue-100">Giants Meeting Room</h1>
+                        <p className="text-gray-400 font-mono text-sm">{now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                    </div>
+
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end pointer-events-none">
+                         <p className="text-xl font-medium text-gray-300 text-right">
                             {now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'})}
                          </p>
                     </div>
@@ -1193,3 +1196,5 @@ export const App = () => {
       </div>
     );
   };
+
+export default App;
