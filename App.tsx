@@ -3,9 +3,9 @@ import { GeminiLiveClient } from './services/geminiLive';
 import { MeetingState, TranscriptionItem } from './types';
 import { 
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, PhoneOffIcon, 
-  LayoutGridIcon, SettingsIcon, ScreenShareIcon, RecordIcon, 
+  SettingsIcon, ScreenShareIcon, RecordIcon, 
   StopRecordIcon, CopyIcon, SparklesIcon, RefreshIcon, DownloadIcon,
-  BoardIcon, LockIcon, MessageSquareIcon, SendIcon, Volume2Icon, VolumeXIcon,
+  BoardIcon, MessageSquareIcon, SendIcon, Volume2Icon, VolumeXIcon,
   PlusIcon, CalendarIcon, ArrowLeftIcon
 } from './components/Icons';
 import AudioVisualizer from './components/AudioVisualizer';
@@ -34,20 +34,20 @@ type AppView = 'home' | 'setup' | 'meeting' | 'ended';
 type SetupMode = 'host' | 'guest';
 
 // Custom Logo Component for Giant Mitra
-const GiantMitraLogo = () => (
-    <div className="flex flex-col items-center select-none">
-        <svg width="50" height="35" viewBox="0 0 100 70" fill="none" stroke="#0ea5e9" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+const GiantMitraLogo = ({ className }: { className?: string }) => (
+    <div className={`flex flex-col items-center select-none ${className}`}>
+        <svg width="60" height="45" viewBox="0 0 120 80" fill="none" stroke="#0ea5e9" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round">
             {/* J */}
-            <path d="M10 5 H 35" />
-            <path d="M22.5 5 V 50 C 22.5 65 5 60 5 50" />
+            <path d="M20 10 H 45" />
+            <path d="M32 10 V 55 Q 32 75 12 65" />
             {/* M */}
-            <path d="M45 60 V 10 L 65 60 L 85 10 V 60" />
+            <path d="M55 70 V 15 L 75 60 L 95 15 V 70" />
         </svg>
-        <span className="text-[#0ea5e9] text-[8px] font-bold -mt-1 tracking-wider font-sans">giantmitra.com</span>
+        <span className="text-[#0ea5e9] text-[10px] font-bold -mt-2 tracking-wider font-sans">giantmitra.com</span>
     </div>
 );
 
-// Helper Components moved to top-level to fix hoisting and reconciliation issues
+// Helper Components
 const ControlBtn = ({ onClick, isActive, icon, activeColor, inactiveColor, tooltip }: any) => (
   <button 
     onClick={onClick}
@@ -71,7 +71,7 @@ const RemoteVideo = ({ stream }: { stream: MediaStream }) => {
   );
 };
 
-const App = () => {
+export const App = () => {
   // Navigation State
   const [view, setView] = useState<AppView>('home');
   const [setupMode, setSetupMode] = useState<SetupMode>('host');
@@ -371,13 +371,6 @@ const App = () => {
   };
 
   const handleJoinMeeting = async () => {
-    const apiKey = process.env.API_KEY || "";
-    
-    if (!apiKey) {
-      setError("API Key not found. Please ensure the API key is configured in your environment.");
-      return;
-    }
-
     if (!mediaStreamRef.current) {
         setError("Microphone/Camera access is required to join.");
         await startCamera();
@@ -389,7 +382,7 @@ const App = () => {
     
     // --- 1. Connect to Gemini AI ---
     try {
-        const client = new GeminiLiveClient(apiKey);
+        const client = new GeminiLiveClient();
         clientRef.current = client;
 
         await client.connect({
@@ -1200,5 +1193,3 @@ const App = () => {
       </div>
     );
   };
-
-export default App;

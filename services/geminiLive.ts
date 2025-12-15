@@ -28,8 +28,8 @@ export class GeminiLiveClient {
   private currentInputTranscription = '';
   private currentOutputTranscription = '';
 
-  constructor(apiKey: string) {
-    this.ai = new GoogleGenAI({ apiKey });
+  constructor() {
+    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
   public async connect(callbacks: LiveConnectionCallbacks) {
