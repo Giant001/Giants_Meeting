@@ -5,7 +5,8 @@ import {
   MicIcon, MicOffIcon, VideoIcon, VideoOffIcon, PhoneOffIcon, 
   LayoutGridIcon, SettingsIcon, ScreenShareIcon, RecordIcon, 
   StopRecordIcon, CopyIcon, SparklesIcon, RefreshIcon, DownloadIcon,
-  BoardIcon, LockIcon, MessageSquareIcon, SendIcon, Volume2Icon, VolumeXIcon
+  BoardIcon, LockIcon, MessageSquareIcon, SendIcon, Volume2Icon, VolumeXIcon,
+  PlusIcon, CalendarIcon, ArrowLeftIcon
 } from './components/Icons';
 import AudioVisualizer from './components/AudioVisualizer';
 import Whiteboard from './components/Whiteboard';
@@ -17,6 +18,7 @@ declare global {
   }
 }
 
+// Global helpers
 const generateRandomString = (len: number) => {
     const chars = 'abcdefghijklmnopqrstuvwxyz';
     return Array.from({length: len}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
@@ -28,7 +30,15 @@ const generateMeetingInfo = () => {
   return { code, passcode };
 };
 
+type AppView = 'home' | 'setup' | 'meeting' | 'ended';
+type SetupMode = 'host' | 'guest';
+
 const App = () => {
+  // Navigation State
+  const [view, setView] = useState<AppView>('home');
+  const [setupMode, setSetupMode] = useState<SetupMode>('host');
+
+  // Meeting Logic State
   const [meetingState, setMeetingState] = useState<MeetingState>(MeetingState.LOBBY);
   const [meetingCode, setMeetingCode] = useState("");
   const [passcode, setPasscode] = useState("");
@@ -41,6 +51,9 @@ const App = () => {
   const [isMutedAll, setIsMutedAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // P2P Identity State
+  const [isP2PHost, setIsP2PHost] = useState(false);
+
   // Chat state
   const [chatMessage, setChatMessage] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -82,7 +95,7 @@ const App = () => {
   const [remoteStreams, setRemoteStreams] = useState<MediaStream[]>([]);
   const peerRef = useRef<any>(null);
 
-  // Initialize MediaPipe and Raw Video Element
+  // --- 1. Initialize & Routing ---
   useEffect(() => {
     // Check URL for code and passcode
     const params = new URLSearchParams(window.location.search);
@@ -92,11 +105,14 @@ const App = () => {
     if (codeFromUrl) {
       setMeetingCode(codeFromUrl);
       if (passFromUrl) setPasscode(passFromUrl);
-      else setPasscode(generateMeetingInfo().passcode); // Generate random if not provided
+      else setPasscode(generateMeetingInfo().passcode);
+      
+      // If code exists in URL, jump straight to Join Mode
+      setSetupMode('guest');
+      setView('setup');
     } else {
-      const info = generateMeetingInfo();
-      setMeetingCode(info.code);
-      setPasscode(info.passcode);
+      // Default to Home
+      setView('home');
     }
 
     // Preload background image
@@ -179,50 +195,40 @@ const App = () => {
 
   // Handle Stream Updates (Background Mode or Camera Toggle)
   const updateStreamSource = useCallback((mode: 'none' | 'blur' | 'image', forceRawStream?: MediaStream) => {
-    // Use provided stream or fall back to current ref
     const rawStream = forceRawStream || originalCameraStreamRef.current;
     
     if (!rawStream) return;
 
     if (mode === 'none') {
-        // Stop processing loop if running
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
         
         mediaStreamRef.current = rawStream;
         
-        // Update Video Elements
         if (previewVideoRef.current) previewVideoRef.current.srcObject = rawStream;
         if (videoRef.current) videoRef.current.srcObject = rawStream;
 
     } else {
-        // Enable processing
         canvasRef.current.width = 1280;
         canvasRef.current.height = 720;
         
-        // Feed raw stream to hidden video for processing
         rawVideoRef.current.srcObject = rawStream;
         rawVideoRef.current.play().catch(console.error);
         
         startProcessingLoop();
 
-        // Create stream from canvas if not exists or needs refresh
         const canvasStream = canvasRef.current.captureStream(30);
         const processedVideoTrack = canvasStream.getVideoTracks()[0];
         
-        // Combine with original Audio
         const audioTracks = rawStream.getAudioTracks();
         const newStream = new MediaStream([processedVideoTrack, ...audioTracks]);
         
         mediaStreamRef.current = newStream;
 
-        // Update UI Video Elements to show processed stream
         if (previewVideoRef.current) previewVideoRef.current.srcObject = newStream;
         if (videoRef.current) videoRef.current.srcObject = newStream;
     }
     
-    // Refresh Gemini Stream if connected
     if (meetingState === MeetingState.CONNECTED && videoRef.current && clientRef.current) {
-        // Small delay to ensure refs are updated
         setTimeout(() => {
              if (videoRef.current) clientRef.current?.startVideoStreaming(videoRef.current);
         }, 100);
@@ -230,9 +236,7 @@ const App = () => {
 
   }, [meetingState, startProcessingLoop, isVideoOn]);
 
-  // Start Camera Helper
   const startCamera = async () => {
-      // Ensure we don't start multiple streams
       if (originalCameraStreamRef.current) return;
 
       try {
@@ -242,8 +246,6 @@ const App = () => {
           });
           
           originalCameraStreamRef.current = stream;
-          
-          // Apply Mic State
           stream.getAudioTracks().forEach(t => t.enabled = isMicOn);
 
           setIsVideoOn(true);
@@ -255,13 +257,11 @@ const App = () => {
       }
   };
 
-  // Stop Camera Helper (Hardware)
   const stopCamera = () => {
       if (originalCameraStreamRef.current) {
           originalCameraStreamRef.current.getTracks().forEach(t => t.stop());
           originalCameraStreamRef.current = null;
       }
-      // If we are using a canvas stream, stop that too
       if (mediaStreamRef.current && mediaStreamRef.current.id !== originalCameraStreamRef.current?.id) {
           mediaStreamRef.current.getTracks().forEach(t => t.stop());
       }
@@ -269,26 +269,27 @@ const App = () => {
       setIsVideoOn(false);
   };
 
-  // Initial Mount
+  // Camera Lifecycle: Only active in Setup or Meeting views
   useEffect(() => {
-    if (meetingState === MeetingState.LOBBY) {
+    if (view === 'setup') {
       startCamera();
+    } else if (view === 'home' || view === 'ended') {
+        // Stop camera when in home to save resources/privacy
+        stopCamera();
     }
     return () => {
-      if (meetingState === MeetingState.LOBBY) {
-          stopCamera();
-      }
+       // Cleanup handled by dependency change logic mostly
     };
-  }, [meetingState]); 
+  }, [view]); 
 
   // Handle Background Mode Changes
   useEffect(() => {
-     if (isVideoOn) {
+     if (isVideoOn && (view === 'setup' || view === 'meeting')) {
          updateStreamSource(backgroundMode);
      }
   }, [backgroundMode]);
 
-  // Scroll Chat to bottom
+  // Scroll Chat
   useEffect(() => {
       if (isChatOpen && chatEndRef.current) {
           chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -296,9 +297,42 @@ const App = () => {
   }, [transcriptions, isChatOpen]);
 
 
-  // Handle Joining
-  const handleJoin = async () => {
-    // Safely access API KEY
+  // --- Actions ---
+
+  const handleStartNewMeeting = () => {
+      const info = generateMeetingInfo();
+      setMeetingCode(info.code);
+      setPasscode(info.passcode);
+      setSetupMode('host');
+      setView('setup');
+      
+      // Update URL silently so refresh works
+      const url = new URL(window.location.href);
+      url.searchParams.set('code', info.code);
+      url.searchParams.set('pwd', info.passcode);
+      window.history.pushState({}, '', url);
+  };
+
+  const handleJoinExisting = () => {
+      setMeetingCode(""); // Let them type
+      setPasscode("");
+      setSetupMode('guest');
+      setView('setup');
+      
+      // Clear URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete('code');
+      url.searchParams.delete('pwd');
+      window.history.pushState({}, '', url);
+  };
+
+  const goBackHome = () => {
+      setView('home');
+      setMeetingState(MeetingState.LOBBY);
+      setError(null);
+  };
+
+  const handleJoinMeeting = async () => {
     const apiKey = process.env.API_KEY || "";
     
     if (!apiKey) {
@@ -308,7 +342,6 @@ const App = () => {
 
     if (!mediaStreamRef.current) {
         setError("Microphone/Camera access is required to join.");
-        // Try starting camera again
         await startCamera();
         if (!originalCameraStreamRef.current) return; 
     }
@@ -324,28 +357,27 @@ const App = () => {
         await client.connect({
         onOpen: () => {
             setMeetingState(MeetingState.CONNECTED);
-            // After connected, we can init PeerJS
+            setView('meeting');
             initPeerConnection();
         },
         onClose: () => {
             setMeetingState(MeetingState.ENDED);
+            setView('ended');
         },
         onError: (err) => {
             setError(err.message || "Connection failed");
             setMeetingState(MeetingState.ERROR);
+            setView('setup'); // Go back to setup on error
         },
         onAudioData: (buffer) => {
             const data = buffer.getChannelData(0);
             let sum = 0;
-            // Simple RMS calc
             for(let i=0; i<data.length; i+=10) sum += data[i] * data[i];
             const rms = Math.sqrt(sum / (data.length / 10));
             setAiAudioLevel(Math.min(1, rms * 5)); 
         },
         onTranscription: (item) => {
-            setTranscriptions(prev => {
-                return [...prev, item];
-            });
+            setTranscriptions(prev => [...prev, item]);
         }
         });
     } catch (e) {
@@ -360,22 +392,20 @@ const App = () => {
   const initPeerConnection = () => {
     if (!mediaStreamRef.current || !window.Peer) return;
 
-    // Sanitize meeting code for Peer ID (PeerJS IDs must be alphanumeric strings)
     const peerId = `gm-${meetingCode.replace(/[^a-zA-Z0-9]/g, '')}`;
 
     try {
-        // Attempt to create peer as the Host (using the meeting code as ID)
         const peer = new window.Peer(peerId);
         
         peer.on('open', (id: string) => {
             console.log("Joined as Host with ID:", id);
             peerRef.current = peer;
+            setIsP2PHost(true);
         });
 
-        // If I am Host, answer calls
         peer.on('call', (call: any) => {
-            console.log("Received call from guest");
-            call.answer(mediaStreamRef.current); // Answer with my stream
+            console.log("Received call");
+            call.answer(mediaStreamRef.current);
             call.on('stream', (remoteStream: MediaStream) => {
                 setRemoteStreams(prev => {
                     if (prev.find(s => s.id === remoteStream.id)) return prev;
@@ -386,13 +416,13 @@ const App = () => {
 
         peer.on('error', (err: any) => {
             if (err.type === 'unavailable-id') {
-                console.log("Host ID taken, joining as Guest...");
-                // ID is taken, so someone else is Host. I am a Guest.
-                const guestPeer = new window.Peer(); // Random ID
+                console.log("ID taken, joining as Guest...");
+                setIsP2PHost(false);
+                
+                const guestPeer = new window.Peer(); 
                 
                 guestPeer.on('open', () => {
                     peerRef.current = guestPeer;
-                    // Call the Host
                     const call = guestPeer.call(peerId, mediaStreamRef.current);
                     
                     call.on('stream', (remoteStream: MediaStream) => {
@@ -412,15 +442,13 @@ const App = () => {
     }
   };
 
-  // Effect to start sending video to Gemini once connected and view is ready
+  // Effect to stream video to Gemini
   useEffect(() => {
     if (meetingState === MeetingState.CONNECTED && clientRef.current && videoRef.current) {
-        // Ensure the video element has the stream
         if (!videoRef.current.srcObject && mediaStreamRef.current) {
             videoRef.current.srcObject = mediaStreamRef.current;
         }
         
-        // Determine what to stream
         if (isWhiteboardOpen && whiteboardCanvasRef.current) {
              const wbStream = whiteboardCanvasRef.current.captureStream(10);
              whiteboardStreamRef.current = wbStream;
@@ -441,45 +469,31 @@ const App = () => {
     stopRecording();
     stopScreenShare();
     clientRef.current?.disconnect();
-    // Destroy Peer
     if (peerRef.current) {
         peerRef.current.destroy();
         peerRef.current = null;
     }
     setRemoteStreams([]);
-    
     stopCamera();
+    
     setMeetingState(MeetingState.ENDED);
+    setView('ended');
   };
   
   const handleRejoin = () => {
-      // Reset state to LOBBY
+      // Go back to home
+      setView('home');
       setMeetingState(MeetingState.LOBBY);
       setError(null);
       setTranscriptions([]);
       setRemoteStreams([]);
   };
 
-  const handleNewMeeting = () => {
-    const info = generateMeetingInfo();
-    setMeetingCode(info.code);
-    setPasscode(info.passcode);
-    
-    const url = new URL(window.location.href);
-    url.searchParams.set('code', info.code);
-    url.searchParams.set('pwd', info.passcode);
-    
-    try {
-        window.history.pushState({}, '', url);
-    } catch (e) {
-        console.warn("Unable to update URL history:", e);
-    }
-  };
-
   const copyInviteLink = () => {
     const url = new URL(window.location.href);
+    // Ensure params are set in case they were cleared
     url.searchParams.set('code', meetingCode);
-    url.searchParams.set('pwd', passcode);
+    if (passcode) url.searchParams.set('pwd', passcode);
     navigator.clipboard.writeText(url.toString());
     alert("Meeting link & passcode copied to clipboard!");
   };
@@ -497,7 +511,6 @@ const App = () => {
     }
   };
 
-  // Revised Toggle Video to handle "Hardware Off" correctly while keeping Audio
   const toggleVideoHardware = async () => {
       if (isScreenSharing) {
           stopScreenShare();
@@ -543,7 +556,6 @@ const App = () => {
           }
       }
   };
-
 
   const startScreenShare = async () => {
     if (isWhiteboardOpen) setIsWhiteboardOpen(false);
@@ -624,7 +636,6 @@ const App = () => {
 
   const startRecording = () => {
     if (!mediaStreamRef.current || !clientRef.current) return;
-    
     try {
         const mixerCtx = new AudioContext();
         recordingMixerContextRef.current = mixerCtx;
@@ -643,7 +654,6 @@ const App = () => {
         }
 
         const mixedAudioTrack = dest.stream.getAudioTracks()[0];
-        
         let videoTrack;
         if (isWhiteboardOpen && whiteboardStreamRef.current) {
             videoTrack = whiteboardStreamRef.current.getVideoTracks()[0];
@@ -694,16 +704,12 @@ const App = () => {
   
   const downloadTranscript = () => {
     if (transcriptions.length === 0) return;
-
     const textContent = transcriptions.map(t => {
       let timeStr = "";
       try {
           const timestamp = parseInt(t.id.split('-')[0]);
-          if (!isNaN(timestamp)) {
-              timeStr = `[${new Date(timestamp).toLocaleTimeString()}] `;
-          }
+          if (!isNaN(timestamp)) timeStr = `[${new Date(timestamp).toLocaleTimeString()}] `;
       } catch (e) {}
-
       const role = t.sender === 'user' ? 'You' : 'Gemini';
       return `${timeStr}${role}: ${t.text}`;
     }).join('\n\n');
@@ -732,160 +738,209 @@ const App = () => {
       );
   };
 
-  // ---- RENDER: LOBBY ----
-  if (meetingState === MeetingState.LOBBY || meetingState === MeetingState.CONNECTING) {
+  // ---------------- VIEW: HOME (Landing) ----------------
+  if (view === 'home') {
+      const now = new Date();
+      return (
+        <div className="min-h-screen bg-gray-900 text-white flex flex-col">
+            <div className="p-6 flex justify-between items-center">
+                 <div className="flex items-center gap-2">
+                     <div className="bg-blue-600 p-2 rounded-lg"><VideoIcon className="w-6 h-6" /></div>
+                     <span className="text-xl font-bold tracking-tight">Gemini Meet</span>
+                 </div>
+                 <button className="p-2 hover:bg-gray-800 rounded-full"><SettingsIcon /></button>
+            </div>
+
+            <div className="flex-1 flex flex-col md:flex-row items-center justify-center gap-8 p-6 max-w-6xl mx-auto w-full">
+                
+                {/* Left: Hero/Time */}
+                <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group">
+                    <img 
+                        src="https://images.unsplash.com/photo-1627637454030-5ddd536e06e5?auto=format&fit=crop&w=1000&q=80" 
+                        alt="Nature" 
+                        className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end">
+                         <h1 className="text-6xl font-bold mb-2">{now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</h1>
+                         <p className="text-xl font-medium text-gray-300">
+                            {now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'})}
+                         </p>
+                    </div>
+                </div>
+
+                {/* Right: Actions */}
+                <div className="flex-1 grid grid-cols-2 gap-4 w-full max-w-lg">
+                    <button 
+                        onClick={handleStartNewMeeting}
+                        className="aspect-square bg-orange-600 hover:bg-orange-700 rounded-3xl flex flex-col items-center justify-center gap-4 transition-all shadow-lg hover:shadow-orange-900/20 group"
+                    >
+                        <div className="bg-white/20 p-4 rounded-2xl group-hover:scale-110 transition-transform">
+                            <VideoIcon className="w-8 h-8" />
+                        </div>
+                        <span className="font-semibold text-lg">New Meeting</span>
+                    </button>
+
+                    <button 
+                        onClick={handleJoinExisting}
+                        className="aspect-square bg-blue-600 hover:bg-blue-700 rounded-3xl flex flex-col items-center justify-center gap-4 transition-all shadow-lg hover:shadow-blue-900/20 group"
+                    >
+                        <div className="bg-white/20 p-4 rounded-2xl group-hover:scale-110 transition-transform">
+                            <PlusIcon className="w-8 h-8" />
+                        </div>
+                        <span className="font-semibold text-lg">Join</span>
+                    </button>
+
+                    <button className="aspect-square bg-blue-600/50 hover:bg-blue-600/70 rounded-3xl flex flex-col items-center justify-center gap-4 transition-all opacity-80 cursor-not-allowed">
+                        <div className="bg-white/20 p-4 rounded-2xl">
+                            <CalendarIcon className="w-8 h-8" />
+                        </div>
+                        <span className="font-semibold text-lg">Schedule</span>
+                    </button>
+
+                    <button className="aspect-square bg-blue-600/50 hover:bg-blue-600/70 rounded-3xl flex flex-col items-center justify-center gap-4 transition-all opacity-80 cursor-not-allowed">
+                        <div className="bg-white/20 p-4 rounded-2xl">
+                            <ScreenShareIcon className="w-8 h-8" />
+                        </div>
+                        <span className="font-semibold text-lg">Share Screen</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+      );
+  }
+
+  // ---------------- VIEW: SETUP (LOBBY) ----------------
+  if (view === 'setup') {
     return (
-      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center p-4">
-        <div className="max-w-4xl w-full bg-gray-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
+      <div className="min-h-screen bg-gray-900 flex flex-col p-4 relative">
+        <button 
+            onClick={goBackHome}
+            className="absolute top-6 left-6 z-10 p-2 bg-gray-800 rounded-full hover:bg-gray-700 text-white flex items-center gap-2 pr-4 transition"
+        >
+            <ArrowLeftIcon /> Back
+        </button>
+
+        <div className="flex-1 flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full items-center justify-center">
           
           {/* Preview Area */}
-          <div className="flex-1 p-6 flex flex-col items-center justify-center bg-black relative min-h-[400px]">
-             {/* Video Preview */}
+          <div className="w-full md:w-2/3 aspect-video bg-black rounded-3xl overflow-hidden relative shadow-2xl border border-gray-800">
              <video 
                 ref={previewVideoRef}
                 autoPlay 
                 muted 
                 playsInline
-                className={`w-full h-full object-cover rounded-lg transform scale-x-[-1] ${!isVideoOn ? 'hidden' : ''}`} 
+                className={`w-full h-full object-cover transform scale-x-[-1] ${!isVideoOn ? 'hidden' : ''}`} 
              />
              {!isVideoOn && (
-                <div className="w-full h-full flex items-center justify-center bg-gray-700 rounded-lg text-gray-400">
-                    <div className="text-center">
-                        <div className="bg-gray-600 p-6 rounded-full inline-block mb-4">
-                            <span className="text-4xl">👤</span>
-                        </div>
-                        <p>Camera is off</p>
-                    </div>
+                <div className="w-full h-full flex items-center justify-center bg-gray-800">
+                    <span className="text-6xl opacity-50">👤</span>
                 </div>
              )}
 
-             {/* Background Effects Menu */}
-             {showBgMenu && (
-                 <div className="absolute top-4 right-4 bg-gray-900/90 backdrop-blur p-3 rounded-xl border border-gray-700 z-10 flex flex-col gap-2 w-48 shadow-xl">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase mb-1">Backgrounds</h3>
-                    <button 
-                        onClick={() => setBackgroundMode('none')}
-                        className={`text-left px-3 py-2 rounded text-sm ${backgroundMode === 'none' ? 'bg-blue-600 text-white' : 'hover:bg-gray-800 text-gray-300'}`}
-                    >
-                        🚫 None
-                    </button>
-                    <button 
-                        onClick={() => setBackgroundMode('blur')}
-                        className={`text-left px-3 py-2 rounded text-sm ${backgroundMode === 'blur' ? 'bg-blue-600 text-white' : 'hover:bg-gray-800 text-gray-300'}`}
-                    >
-                        💧 Blur
-                    </button>
-                    <button 
-                        onClick={() => setBackgroundMode('image')}
-                        className={`text-left px-3 py-2 rounded text-sm ${backgroundMode === 'image' ? 'bg-blue-600 text-white' : 'hover:bg-gray-800 text-gray-300'}`}
-                    >
-                        🌆 Office
-                    </button>
-                 </div>
-             )}
-
-             <div className="absolute bottom-6 flex gap-4">
+             <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-4">
                 <button 
                   onClick={toggleMic}
-                  className={`p-4 rounded-full ${isMicOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white transition`}
+                  className={`p-4 rounded-full ${isMicOn ? 'bg-gray-700/80 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white backdrop-blur transition`}
                 >
                   {isMicOn ? <MicIcon /> : <MicOffIcon />}
                 </button>
                 <button 
                   onClick={toggleVideoHardware}
-                  className={`p-4 rounded-full ${isVideoOn ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white transition`}
+                  className={`p-4 rounded-full ${isVideoOn ? 'bg-gray-700/80 hover:bg-gray-600' : 'bg-red-500 hover:bg-red-600'} text-white backdrop-blur transition`}
                 >
                   {isVideoOn ? <VideoIcon /> : <VideoOffIcon />}
                 </button>
                 <button 
                   onClick={() => setShowBgMenu(!showBgMenu)}
-                  className={`p-4 rounded-full ${backgroundMode !== 'none' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 hover:bg-gray-600'} text-white transition`}
-                  title="Background Effects"
+                  className={`p-4 rounded-full ${backgroundMode !== 'none' ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700/80 hover:bg-gray-600'} text-white backdrop-blur transition`}
                 >
                    <SparklesIcon />
                 </button>
              </div>
+             
+             {/* Background Menu */}
+             {showBgMenu && (
+                 <div className="absolute bottom-24 right-1/2 translate-x-1/2 bg-gray-900/95 backdrop-blur border border-gray-700 p-2 rounded-xl flex gap-2">
+                    <button onClick={() => setBackgroundMode('none')} className={`px-4 py-2 rounded-lg ${backgroundMode==='none'?'bg-blue-600':'hover:bg-gray-800'}`}>None</button>
+                    <button onClick={() => setBackgroundMode('blur')} className={`px-4 py-2 rounded-lg ${backgroundMode==='blur'?'bg-blue-600':'hover:bg-gray-800'}`}>Blur</button>
+                    <button onClick={() => setBackgroundMode('image')} className={`px-4 py-2 rounded-lg ${backgroundMode==='image'?'bg-blue-600':'hover:bg-gray-800'}`}>Office</button>
+                 </div>
+             )}
           </div>
 
           {/* Join Controls */}
-          <div className="w-full md:w-96 p-8 flex flex-col justify-center border-l border-gray-700">
-            <h1 className="text-3xl font-bold mb-2">Gemini Meet</h1>
-            <p className="text-gray-400 mb-6">High-fidelity AI video conferencing</p>
+          <div className="w-full md:w-1/3 bg-gray-800/50 p-8 rounded-3xl border border-gray-700/50 flex flex-col gap-6">
+            <h2 className="text-2xl font-bold">{setupMode === 'host' ? 'Start a Meeting' : 'Join Meeting'}</h2>
             
-            <div className="mb-6 space-y-4">
-                <div>
-                  <label className="block text-gray-500 text-xs uppercase font-bold mb-2">Meeting Code</label>
-                  <div className="flex gap-2">
-                      <input 
-                          type="text" 
-                          value={meetingCode}
-                          onChange={(e) => setMeetingCode(e.target.value)}
-                          className="flex-1 bg-gray-900 border border-gray-600 rounded p-2 text-white focus:outline-none focus:border-blue-500 font-mono"
-                          placeholder="abc-def-ghi"
-                      />
-                      <button 
-                          onClick={handleNewMeeting}
-                          className="p-2 bg-gray-700 rounded hover:bg-gray-600 text-gray-300"
-                          title="Generate New Code"
-                      >
-                          <RefreshIcon className="w-5 h-5" />
-                      </button>
-                  </div>
-                </div>
-
-                <div>
-                   <label className="block text-gray-500 text-xs uppercase font-bold mb-2">Passcode</label>
-                   <div className="flex gap-2 items-center bg-gray-900 border border-gray-600 rounded p-2">
-                      <LockIcon className="w-4 h-4 text-gray-400" />
-                      <span className="font-mono text-white flex-1">{passcode}</span>
-                   </div>
-                </div>
-
-                <button 
-                    onClick={copyInviteLink}
-                    className="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 flex items-center justify-center gap-2 text-sm"
-                >
-                    <CopyIcon className="w-4 h-4" /> Copy Invite Link & Passcode
-                </button>
-            </div>
-
-            {error && (
-              <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded mb-4 text-sm">
-                {error}
-              </div>
+            {setupMode === 'host' ? (
+                <>
+                    <div className="bg-gray-900 p-4 rounded-xl border border-gray-700">
+                        <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">Personal Meeting ID</label>
+                        <div className="flex items-center gap-2 mt-2">
+                            <span className="text-xl font-mono tracking-wide">{meetingCode}</span>
+                            <button onClick={handleStartNewMeeting} className="p-1 hover:bg-gray-800 rounded ml-auto text-gray-400"><RefreshIcon className="w-4 h-4" /></button>
+                        </div>
+                    </div>
+                    
+                    <button 
+                        onClick={copyInviteLink}
+                        className="w-full py-3 bg-gray-700 hover:bg-gray-600 rounded-xl text-gray-300 flex items-center justify-center gap-2"
+                    >
+                        <CopyIcon className="w-5 h-5" /> Copy Invitation
+                    </button>
+                </>
+            ) : (
+                <>
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">Meeting ID</label>
+                        <input 
+                            type="text" 
+                            value={meetingCode} 
+                            onChange={(e) => setMeetingCode(e.target.value)}
+                            className="w-full bg-gray-900 border border-gray-600 rounded-xl px-4 py-3 focus:outline-none focus:border-blue-500 transition text-lg font-mono"
+                            placeholder="abc-def-ghi"
+                        />
+                    </div>
+                </>
             )}
 
-            <button
-              onClick={handleJoin}
-              disabled={meetingState === MeetingState.CONNECTING}
-              className="w-full py-3 px-6 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-wait text-white font-semibold rounded-lg transition shadow-lg flex items-center justify-center gap-2"
-            >
-              {meetingState === MeetingState.CONNECTING ? 'Connecting...' : 'Join now'}
-            </button>
+            {error && <div className="text-red-400 bg-red-900/20 p-3 rounded-lg text-sm">{error}</div>}
+
+            <div className="mt-auto">
+                <button
+                    onClick={handleJoinMeeting}
+                    disabled={meetingState === MeetingState.CONNECTING || !meetingCode}
+                    className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 rounded-xl font-bold text-lg shadow-lg shadow-blue-900/20 transition flex items-center justify-center gap-2"
+                >
+                    {meetingState === MeetingState.CONNECTING ? 'Connecting...' : (setupMode === 'host' ? 'Start Meeting' : 'Join')}
+                </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  // ---- RENDER: MEETING ----
-  if (meetingState === MeetingState.CONNECTED) {
+  // ---------------- VIEW: MEETING (CONNECTED) ----------------
+  if (view === 'meeting') {
     return (
       <div className="h-screen bg-gray-950 flex flex-col relative overflow-hidden">
         
         {/* Header */}
         <div className="absolute top-0 left-0 right-0 z-10 p-4 flex justify-between items-center bg-gradient-to-b from-black/70 to-transparent pointer-events-none">
-           <div className="flex items-center gap-2 pointer-events-auto">
-             <div className="bg-blue-600 p-1.5 rounded text-xs font-bold">GM</div>
+           <div className="flex items-center gap-3 pointer-events-auto">
+             <div className="bg-blue-600 p-2 rounded-lg"><VideoIcon className="w-4 h-4" /></div>
              <div className="flex flex-col">
-               <span className="font-semibold text-lg tracking-tight leading-none">Meeting</span>
-               <div className="flex gap-2 text-xs text-gray-400 font-mono mt-0.5">
+               <span className="font-bold text-sm">{setupMode === 'host' ? 'Your Meeting' : 'Meeting Room'}</span>
+               <div className="flex gap-2 text-xs text-gray-400 font-mono items-center">
                   <span>{meetingCode}</span>
-                  <span className="border-l border-gray-600 pl-2 flex items-center gap-1"><LockIcon className="w-2.5 h-2.5" />{passcode}</span>
+                  <div className="w-1 h-1 bg-gray-500 rounded-full"></div>
+                  <span>{transcriptions.length > 0 ? 'Active' : 'Ready'}</span>
                </div>
              </div>
              {isRecording && <span className="flex items-center gap-1 text-red-500 text-xs font-bold bg-red-900/30 px-2 py-1 rounded ml-2 animate-pulse"><div className="w-2 h-2 bg-red-500 rounded-full"></div>REC</span>}
            </div>
+           
            <div className="flex gap-2 pointer-events-auto">
               <button 
                 onClick={toggleMuteAll}
@@ -901,36 +956,33 @@ const App = () => {
               >
                   <CopyIcon className="w-5 h-5" />
               </button>
-              <button className="p-2 hover:bg-gray-800 rounded-full"><LayoutGridIcon className="w-5 h-5" /></button>
-              <button className="p-2 hover:bg-gray-800 rounded-full"><SettingsIcon className="w-5 h-5" /></button>
            </div>
         </div>
 
         {/* Main Stage (Grid) */}
         <div className="flex-1 p-4 flex gap-4 overflow-hidden relative">
           
-          {/* Main Content (AI/Whiteboard) */}
           <div className={`flex-1 flex flex-col gap-4 ${isChatOpen ? 'mr-80' : ''} transition-all`}>
               
-              {/* Remote Participants Grid (if any) */}
+              {/* Remote Participants */}
               {remoteStreams.length > 0 && (
                   <div className="h-40 flex gap-4 overflow-x-auto pb-2 flex-shrink-0">
                       {remoteStreams.map((stream) => (
-                          <div key={stream.id} className="w-64 h-full bg-gray-800 rounded-xl overflow-hidden flex-shrink-0 border border-gray-700 shadow-lg">
+                          <div key={stream.id} className="w-64 h-full bg-gray-800 rounded-xl overflow-hidden flex-shrink-0 border border-gray-700 shadow-lg relative">
                               <RemoteVideo stream={stream} />
+                              <div className="absolute top-2 right-2 bg-black/60 px-2 py-1 rounded text-[10px] text-white">Guest</div>
                           </div>
                       ))}
                   </div>
               )}
 
-              {/* Central Stage */}
+              {/* Central Stage (Gemini) */}
               <div className="flex-1 bg-gray-900 rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border border-gray-800 shadow-2xl">
                 {isWhiteboardOpen ? (
                     <Whiteboard canvasRef={whiteboardCanvasRef} />
                 ) : (
                     <>
                         <div className="absolute inset-0 flex items-center justify-center">
-                            {/* Visualizer for AI Voice */}
                             <div className="w-64 h-64 relative">
                             <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full scale-150 animate-pulse"></div>
                             <AudioVisualizer isActive={!isMutedAll} audioLevel={aiAudioLevel} />
@@ -940,24 +992,22 @@ const App = () => {
                             </div>
                         </div>
                         
-                        {/* Name Tag */}
-                        <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1 rounded text-sm font-medium flex items-center gap-2">
-                            <span>Gemini (Host)</span>
+                        <div className="absolute bottom-4 left-4 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2">
+                            <span>Gemini AI</span>
                             {aiAudioLevel > 0.05 && !isMutedAll && <div className="w-2 h-2 bg-green-500 rounded-full"></div>}
-                            {isMutedAll && <VolumeXIcon className="w-3 h-3 text-red-400" />}
                         </div>
                     </>
                 )}
              </div>
           </div>
 
-          {/* Caption/Transcription Overlay (Only if not whiteboard for clarity and chat closed) */}
+          {/* Captions */}
           {!isWhiteboardOpen && !isChatOpen && (
             <div className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-2xl text-center pointer-events-none z-20">
                 {transcriptions.length > 0 && (
-                    <div className="bg-black/60 backdrop-blur px-6 py-2 rounded-xl text-lg text-white shadow-lg transition-all inline-block">
+                    <div className="bg-black/60 backdrop-blur px-6 py-3 rounded-2xl text-lg text-white shadow-xl transition-all inline-block">
                     {transcriptions[transcriptions.length - 1].sender === 'model' && (
-                        <span className="text-blue-300 mr-2">Gemini:</span>
+                        <span className="text-blue-300 mr-2 font-bold">Gemini:</span>
                     )}
                     {transcriptions[transcriptions.length - 1].text}
                     </div>
@@ -970,14 +1020,11 @@ const App = () => {
              <div className="p-4 border-b border-gray-800 font-bold flex justify-between items-center">
                 <span>In-Call Messages</span>
                 <button onClick={toggleChat} className="text-gray-400 hover:text-white">
-                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                   <ArrowLeftIcon />
                 </button>
              </div>
              
              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                 {transcriptions.length === 0 && (
-                     <div className="text-center text-gray-500 text-sm mt-10">No messages yet. Start talking!</div>
-                 )}
                  {transcriptions.map((msg, idx) => (
                      <div key={idx} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
                          <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-sm ${
@@ -1015,14 +1062,13 @@ const App = () => {
              </div>
           </div>
 
-          {/* User Self View (Floating) */}
-          <div className="absolute bottom-6 right-6 w-64 aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border border-gray-700 group z-30 transition-all duration-300">
+          {/* User Self View */}
+          <div className="absolute bottom-6 right-6 w-56 aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border border-gray-700 group z-30 transition-all duration-300 hover:w-72">
              <video 
                 ref={videoRef}
                 autoPlay 
                 muted 
                 playsInline
-                // Mirror if camera (and not sharing screen or whiteboard), don't mirror if sharing
                 className={`w-full h-full object-cover ${isScreenSharing || isWhiteboardOpen ? '' : 'transform scale-x-[-1]'} ${(!isVideoOn && !isScreenSharing) ? 'opacity-0' : 'opacity-100'}`} 
              />
              {(!isVideoOn && !isScreenSharing) && (
@@ -1030,8 +1076,8 @@ const App = () => {
                  <span className="text-2xl">👤</span>
                </div>
              )}
-             <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-xs flex items-center gap-1">
-                You {isScreenSharing ? '(Presentation)' : isWhiteboardOpen ? '(Whiteboard)' : ''}
+             <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 rounded text-[10px] text-white flex items-center gap-1 font-medium">
+                You {isP2PHost ? '(Host)' : '(Guest)'}
              </div>
              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {!isMicOn && <div className="bg-red-500 p-1 rounded-full"><MicOffIcon className="w-3 h-3" /></div>}
@@ -1041,7 +1087,7 @@ const App = () => {
         </div>
 
         {/* Bottom Control Bar */}
-        <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center gap-4 px-4 relative z-50">
+        <div className="h-20 bg-gray-900 border-t border-gray-800 flex items-center justify-center gap-3 px-4 relative z-50">
            
            {/* In-meeting background menu */}
            {showBgMenu && (
@@ -1056,7 +1102,7 @@ const App = () => {
              onClick={toggleMic} 
              isActive={!isMicOn} 
              activeColor="bg-red-600 hover:bg-red-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={isMicOn ? <MicIcon /> : <MicOffIcon />} 
              tooltip={isMicOn ? "Mute" : "Unmute"}
            />
@@ -1064,7 +1110,7 @@ const App = () => {
              onClick={toggleVideoHardware} 
              isActive={!isVideoOn && !isScreenSharing && !isWhiteboardOpen}
              activeColor="bg-red-600 hover:bg-red-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={isVideoOn || isScreenSharing || isWhiteboardOpen ? <VideoIcon /> : <VideoOffIcon />} 
              tooltip={isVideoOn ? "Stop Video" : "Start Video"}
            />
@@ -1073,7 +1119,7 @@ const App = () => {
              onClick={() => setShowBgMenu(!showBgMenu)} 
              isActive={showBgMenu || backgroundMode !== 'none'}
              activeColor="bg-blue-600 hover:bg-blue-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={<SparklesIcon />} 
              tooltip="Background Effects"
            />
@@ -1084,7 +1130,7 @@ const App = () => {
              onClick={toggleWhiteboard} 
              isActive={isWhiteboardOpen}
              activeColor="bg-green-600 hover:bg-green-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={<BoardIcon />} 
              tooltip="Whiteboard"
            />
@@ -1093,7 +1139,7 @@ const App = () => {
              onClick={handleScreenShareToggle} 
              isActive={isScreenSharing}
              activeColor="bg-green-600 hover:bg-green-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={<ScreenShareIcon />} 
              tooltip="Share Screen"
            />
@@ -1101,8 +1147,8 @@ const App = () => {
            <ControlBtn 
              onClick={handleRecordToggle} 
              isActive={isRecording}
-             activeColor="bg-gray-700 border-2 border-red-500"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             activeColor="bg-gray-800 border-2 border-red-500"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={isRecording ? <StopRecordIcon className="text-red-500" /> : <RecordIcon />} 
              tooltip="Record Meeting"
            />
@@ -1111,7 +1157,7 @@ const App = () => {
              onClick={toggleChat} 
              isActive={isChatOpen}
              activeColor="bg-blue-600 hover:bg-blue-700"
-             inactiveColor="bg-gray-700 hover:bg-gray-600"
+             inactiveColor="bg-gray-800 hover:bg-gray-700"
              icon={<MessageSquareIcon />} 
              tooltip="Chat"
            />
@@ -1120,7 +1166,7 @@ const App = () => {
 
            <button 
              onClick={handleLeave}
-             className="w-16 h-10 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white transition-all px-8"
+             className="w-16 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white transition-all px-6"
              title="Leave Meeting"
            >
               <PhoneOffIcon />
@@ -1130,28 +1176,30 @@ const App = () => {
     );
   }
 
-  // ---- RENDER: ENDED/ERROR ----
+  // ---------------- VIEW: ENDED ----------------
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-white">
-      <h1 className="text-3xl font-bold mb-4">Meeting Ended</h1>
-      <p className="text-gray-400 mb-8">{error ? `Error: ${error}` : "You left the meeting."}</p>
-      
-      <div className="flex gap-4">
-        {transcriptions.length > 0 && (
-          <button
-            onClick={downloadTranscript}
-            className="px-6 py-2 bg-gray-700 rounded hover:bg-gray-600 transition flex items-center gap-2"
-          >
-            <DownloadIcon className="w-4 h-4" /> Download Transcript
-          </button>
-        )}
-        
-        <button 
-          onClick={handleRejoin}
-          className="px-6 py-2 bg-blue-600 rounded hover:bg-blue-700 transition"
-        >
-          Rejoin
-        </button>
+      <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl border border-gray-700 text-center max-w-md w-full">
+          <h1 className="text-3xl font-bold mb-4">Meeting Ended</h1>
+          <p className="text-gray-400 mb-8">{error ? `Error: ${error}` : "You have left the meeting."}</p>
+          
+          <div className="flex flex-col gap-4">
+            {transcriptions.length > 0 && (
+              <button
+                onClick={downloadTranscript}
+                className="w-full py-3 bg-gray-700 rounded-xl hover:bg-gray-600 transition flex items-center justify-center gap-2"
+              >
+                <DownloadIcon className="w-5 h-5" /> Download Transcript
+              </button>
+            )}
+            
+            <button 
+              onClick={handleRejoin}
+              className="w-full py-3 bg-blue-600 rounded-xl hover:bg-blue-700 transition font-bold"
+            >
+              Return to Home
+            </button>
+          </div>
       </div>
     </div>
   );
@@ -1161,7 +1209,7 @@ const ControlBtn = ({ onClick, isActive, icon, activeColor, inactiveColor, toolt
   <button 
     onClick={onClick}
     title={tooltip}
-    className={`p-3 rounded-full text-white transition-all duration-200 ${isActive ? activeColor : inactiveColor}`}
+    className={`p-3.5 rounded-full text-white transition-all duration-200 ${isActive ? activeColor : inactiveColor}`}
   >
     {icon}
   </button>
