@@ -153,8 +153,8 @@ export const App = () => {
       setView('home');
     }
 
-    // Preload background image
-    backgroundImgRef.current.src = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80";
+    // Preload background image - Updated to a professional office background
+    backgroundImgRef.current.src = "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1920&q=80";
 
     // Init invisible video element for processing
     rawVideoRef.current.autoplay = true;
@@ -771,19 +771,26 @@ export const App = () => {
 
             <div className="flex-1 flex flex-col md:flex-row items-center justify-center gap-8 p-6 max-w-6xl mx-auto w-full">
                 
-                {/* Left: Hero/Time - UPDATED to show Giant Mitra Branding */}
-                <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group border border-gray-700 bg-gray-800 flex items-center justify-center">
-                    <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-gray-800 to-blue-900/40"></div>
+                {/* Left: Hero/Time - UPDATED with new Image */}
+                <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group border border-gray-700 bg-gray-800">
+                    <img 
+                        src="https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1200&q=80"
+                        alt="Meeting Room" 
+                        className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 opacity-60"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-gray-900 via-transparent to-transparent"></div>
                     
-                    {/* Centered Large Branding */}
-                    <div className="relative z-10 p-10 bg-white/5 rounded-3xl backdrop-blur-sm border border-white/10 flex flex-col items-center gap-4 transform transition-transform hover:scale-105 duration-500">
-                        <GiantMitraLogo scale={2.5} />
-                        <h1 className="text-3xl font-bold mt-8 text-blue-100">Giants Meeting Room</h1>
-                        <p className="text-gray-400 font-mono text-sm">{now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                    {/* Centered Large Branding Overlay */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 z-10">
+                        <div className="p-6 bg-black/40 backdrop-blur-sm rounded-3xl border border-white/10 flex flex-col items-center">
+                            <GiantMitraLogo scale={2.5} />
+                            <h1 className="text-3xl font-bold mt-6 text-white text-center">Giants Meeting Room</h1>
+                            <p className="text-gray-300 font-mono text-sm mt-2">{now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                        </div>
                     </div>
 
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-8 flex flex-col justify-end pointer-events-none">
-                         <p className="text-xl font-medium text-gray-300 text-right">
+                    <div className="absolute bottom-0 right-0 p-8 flex flex-col justify-end pointer-events-none">
+                         <p className="text-xl font-medium text-gray-300 text-right drop-shadow-md">
                             {now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'})}
                          </p>
                     </div>
