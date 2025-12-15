@@ -33,6 +33,11 @@ const generateMeetingInfo = () => {
 type AppView = 'home' | 'setup' | 'meeting' | 'ended';
 type SetupMode = 'host' | 'guest';
 
+// --- IMAGE CONFIGURATION ---
+// If you have uploaded an image, replace this URL with your local path (e.g., "/my-image.jpg")
+const HERO_IMAGE_URL = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80";
+// ---------------------------
+
 // Custom Logo Component for Giant Mitra
 const GiantMitraLogo = ({ className, scale = 1 }: { className?: string; scale?: number }) => (
     <div className={`flex flex-col items-center select-none ${className}`} style={{ transform: `scale(${scale})` }}>
@@ -153,8 +158,8 @@ export const App = () => {
       setView('home');
     }
 
-    // Preload background image - Updated to a professional office background
-    backgroundImgRef.current.src = "https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1920&q=80";
+    // Preload background image
+    backgroundImgRef.current.src = HERO_IMAGE_URL;
 
     // Init invisible video element for processing
     rawVideoRef.current.autoplay = true;
@@ -774,7 +779,7 @@ export const App = () => {
                 {/* Left: Hero/Time - UPDATED with new Image */}
                 <div className="flex-1 w-full h-[400px] rounded-3xl overflow-hidden relative shadow-2xl group border border-gray-700 bg-gray-800">
                     <img 
-                        src="https://images.unsplash.com/photo-1542744173-8e7e53415bb0?auto=format&fit=crop&w=1200&q=80"
+                        src={HERO_IMAGE_URL}
                         alt="Meeting Room" 
                         className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 opacity-60"
                     />
